@@ -29,6 +29,9 @@ Namespace Agc
         Public ReadOnly Io As AgcIo
         Public ReadOnly Diagnostics As AgcDiagnostics
 
+        ''' <summary>The interpretive (Danzig) instruction engine.</summary>
+        Public ReadOnly Interpreter As AgcInterpreter
+
         Public Property Tracer As Action(Of AgcCpu)
 
         ''' <summary>Number of times the program has been restarted (GOJAM).</summary>
@@ -49,6 +52,11 @@ Namespace Agc
             Io.TimerAccess = Me
             Cpu = New AgcCpu(Memory, Io)
 
+            ' Hook up the interpretive engine so that words the basic CPU does not
+            ' recognise are executed as Danzig instructions.
+            Interpreter = New AgcInterpreter(Cpu, Memory)
+            Cpu.Interpreter = Interpreter
+
             Io.RaiseInterrupt = AddressOf OnInterruptRequest
         End Sub
 
@@ -63,6 +71,7 @@ Namespace Agc
             Memory.Fbank(0) = 0
             Memory.Fbank(1) = 0
             Cpu.Reset()
+            Interpreter.Reset()
             If Tracer IsNot Nothing Then Cpu.Tracer = Tracer
         End Sub
 

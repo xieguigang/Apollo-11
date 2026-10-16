@@ -117,6 +117,15 @@ Namespace Agc
         ''' <summary>Optional per-instruction trace hook.</summary>
         Public Property Tracer As Action(Of AgcCpu)
 
+        ''' <summary>
+        ''' The interpretive (Danzig) instruction engine.  When set, a word that no
+        ''' basic instruction matches is offered to it; see AgcInterpreter.
+        ''' </summary>
+        Public Property Interpreter As AgcInterpreter
+
+        ''' <summary>Development aid: report every unmatched instruction word.</summary>
+        Public Property TraceFallback As Boolean
+
         ''' <summary>Alarm codes raised by the software (via the ALARM routine).</summary>
         Public ReadOnly Alarms As New List(Of Integer)()
 
@@ -754,8 +763,12 @@ Namespace Agc
                 ' ----------------------------------------------------------
                 ' MASK (070-077)
                 ' ----------------------------------------------------------
-                Case &H38 To &H3F
-                    ' MASK (070-077)
+                Case &H38 To &H3D
+                    ' MASK (070-077).  Case 070 is 56; the range stops at 61 so that
+                    ' 062 and 063, which no basic instruction occupies, reach the
+                    ' interpretive engine below instead of being taken for MASK.
+                    ' The interpretive opcodes are complemented instruction words and
+                    ' some of them land here.
                     A = OverflowCorrected(accumulator16) And ReadAddress12(address12)
                     A16 = 0
 
@@ -790,13 +803,13 @@ Namespace Agc
                     ' EDRUPT handled by the interrupt logic.
 
                 ' ----------------------------------------------------------
-                ' DV (0110-0111)
+                ' DV (0110-0111) -> dispatch 72-73
                 ' ----------------------------------------------------------
                 Case &H48, &H49
                     ExecuteDivide(address10, accumulator16)
 
                 ' ----------------------------------------------------------
-                ' BZF (0112-0117)
+                ' BZF (0112-0117) -> dispatch 74-79
                 ' ----------------------------------------------------------
                 Case &H4A To &H4F
                     If OverflowCorrected(accumulator16) = 0 Then
@@ -919,8 +932,39 @@ Namespace Agc
                     ExecuteMultiply(address12, accumulator16)
 
                 Case Else
-                    Halted = True
-                    HaltReason = "Unrecognised opcode " & Convert.ToString(extendedOpcode, 8)
+                    ' No basic instruction matches.  The word may select an
+                    ' interpretive (Danzig) instruction, which is a virtual machine
+                    ' layered on top of the basic set: the instruction word is
+                    ' followed by its operand word.  The interpreter takes over
+                    ' from here.
+                    If TraceFallback Then
+                        Console.WriteLine("  FALLBACK Z=" & AgcWord.ToOctal(Z) &
+                                          " instr=" & AgcWord.ToOctal(instruction) &
+                                          " extOp=" & extendedOpcode.ToString() &
+                                          " Q=" & AgcWord.ToOctal(Q) &
+                                          " interp=" & (Interpreter IsNot Nothing).ToString())
+                    End If
+                    If Interpreter IsNot Nothing Then
+                        Dim operandWord As Integer = 0
+                        Dim operandAddr As Integer = (programCounter + 1) And &HFFF
+                        If operandAddr < &H400 Then
+                            operandWord = GetErasable(operandAddr)
+                        Else
+                            operandWord = Memory.ReadFixed(operandAddr)
+                        End If
+                        If Interpreter.Execute(instruction, operandWord) Then
+                            ' The interpretive instruction occupied two basic words.
+                            NextZ = (programCounter + 2) And &HFFF
+                            executedTc = True
+                        Else
+                            Halted = True
+                            HaltReason = "Unrecognised opcode " & Convert.ToString(extendedOpcode, 8) &
+                                         " and no interpretive instruction"
+                        End If
+                    Else
+                        Halted = True
+                        HaltReason = "Unrecognised opcode " & Convert.ToString(extendedOpcode, 8)
+                    End If
             End Select
 
             Dim cycles As Integer = 1

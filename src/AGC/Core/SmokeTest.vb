@@ -24,67 +24,26 @@ Namespace Agc
             _failed = 0
             _passed = 0
 
-            ' Characterise VB's right-shift operator across all amounts, using a
-            ' single-bit probe value so nothing else can interfere.
-            Dim probeWord As Integer = 1
-            Dim sbShift As New System.Text.StringBuilder()
-            For s As Integer = 0 To 20
-                sbShift.Append(s).Append(":").Append((probeWord >> s).ToString()).Append(" ")
-            Next
-            Console.WriteLine("SHIFTMAP 1>>n = " & sbShift.ToString())
-            Dim high As Integer = &H18000
-            Dim sbShift2 As New System.Text.StringBuilder()
-            For s As Integer = 0 To 12
-                sbShift2.Append(s).Append(":").Append((high >> s).ToString()).Append(" ")
-            Next
-            Console.WriteLine("SHIFTMAP 0x18000>>n = " & sbShift2.ToString())
-            Dim div As Integer = high \ 512
-            Console.WriteLine("DIVMETHOD 0x18000 \\ 512 = " & div.ToString() &
-                              " ; ((0x18000 / 512) And 127) = " & ((high \ 512) And 127).ToString())
-
-            ' Determine the exact scope of the And misbehaviour before working
-            ' around it: 192 And 127 must be 0 (11000000 and 01111111 share no bit).
-            For Each pair As Integer() In New Integer()() {
-                    New Integer() {192, 127}, New Integer() {64, 127},
-                    New Integer() {255, 127}, New Integer() {128, 127},
-                    New Integer() {192, 255}, New Integer() {193, 127},
-                    New Integer() {15, 7}, New Integer() {240, 15}}
-                Console.WriteLine("ANDCASE " & pair(0).ToString() & " And " & pair(1).ToString() &
-                                  " = " & (pair(0) And pair(1)).ToString() &
-                                  " ; Mod method = " & (pair(0) Mod (pair(1) + 1)).ToString())
-            Next
-
-            Dim probe As AgcOpcode = Nothing
             ' The executor switches on the value yaAGC calls ExtendedOpcode, which
-            ' is "instruction >> 9".  This table is the contract between the
-            ' assembler and the CPU dispatch cases.
+            ' is "instruction >> 9".  This is the contract between the assembler and
+            ' the CPU's Select Case, so print it for every instruction.
             Dim names As String() = New String() {"TC", "CCS", "TCF", "DAS", "LXCH", "INCR",
                                                   "ADS", "CA", "CS", "INDEX", "DXCH", "TS",
                                                   "XCH", "AD", "MASK", "READ", "WRITE", "RAND",
                                                   "WAND", "ROR", "WOR", "RXOR", "EDRUPT",
                                                   "BZF", "MSU", "DV", "QXCH", "AUG", "DIM",
                                                   "DCA", "DCS", "SU", "BZMF", "MP"}
-            Dim sb As New System.Text.StringBuilder()
+            Console.WriteLine("CASEMAP")
             For Each nm As String In names
-                sb.Append(nm).Append("=").Append(AgcOpcodeTable.DispatchValueForName(nm).ToString()).Append("  ")
+                Console.WriteLine("  " & nm.PadRight(7) & " case " &
+                                  AgcOpcodeTable.DispatchValueForName(nm).ToString())
             Next
-            Console.WriteLine("DISPATCH " & sb.ToString())
-            If AgcOpcodeTable.TryGetBasic("CA", probe) Then
-                Console.WriteLine("TABLE CA opcode=" & AgcWord.ToOctal(probe.Opcode) &
-                                  " flags=" & probe.Flags.ToString())
-            Else
-                Console.WriteLine("TABLE CA not found")
-            End If
-            If AgcOpcodeTable.TryGetBasic("AD", probe) Then
-                Console.WriteLine("TABLE AD opcode=" & AgcWord.ToOctal(probe.Opcode) &
-                                  " flags=" & probe.Flags.ToString())
-            End If
-            If AgcOpcodeTable.TryGetBasic("TS", probe) Then
-                Console.WriteLine("TABLE TS opcode=" & AgcWord.ToOctal(probe.Opcode))
-            End If
+            Console.WriteLine("CASEMAP DLOAD word 077745 -> " &
+                              AgcOpcodeTable.DispatchValueFromWord(&O77745).ToString())
 
             RunAritmeticProgram()
             RunInterpreterProgram()
+            RunInterpretiveExecution()
 
             Console.WriteLine()
             Console.WriteLine("Smoke test: " & _passed.ToString() & " checks passed, " &
@@ -104,6 +63,94 @@ Namespace Agc
         Private Function Octal(v As Integer) As String
             Return AgcWord.ToOctal(v)
         End Function
+
+        ''' <summary>
+        ''' Execute interpretive (Danzig) instructions on the virtual hardware.
+        '''
+        '''     SETLOC  04000
+        '''     BANK
+        '''         DLOAD   ONE         # MPAC = 1.0
+        '''         DAD     TWO         # MPAC = 1.0 + 2.0 = 3.0
+        '''         DCOMP               # MPAC = -3.0
+        '''         DCOMP               # MPAC =  3.0
+        '''         EXIT
+        '''     ONE     2DEC    1.0
+        '''     TWO     2DEC    2.0
+        ''' </summary>
+        Private Sub RunInterpretiveExecution()
+            Console.WriteLine("Interpretive (Danzig) execution test:")
+
+            Dim dir As String = Path.Combine(Path.GetTempPath(), "agc-danzig-" & Guid.NewGuid().ToString("N"))
+            Directory.CreateDirectory(dir)
+            Try
+                Dim t As String = Chr(9) & Chr(9)
+                Dim one As String = Chr(9)
+                Dim src As New StringBuilder()
+                src.Append(t & "SETLOC" & one & "4000" & vbCrLf)
+                src.Append(t & "BANK" & vbCrLf)
+                src.Append(one & "DLOAD" & t & "ONE" & vbCrLf)
+                src.Append(one & "DAD" & t & "TWO" & vbCrLf)
+                src.Append(one & "DCOMP" & vbCrLf)
+                src.Append(one & "DCOMP" & vbCrLf)
+                src.Append(one & "EXIT" & vbCrLf)
+                src.Append("ONE" & t & "2DEC" & one & "1.0" & vbCrLf)
+                src.Append("TWO" & t & "2DEC" & one & "2.0" & vbCrLf)
+                File.WriteAllText(Path.Combine(dir, "MAIN.agc"), src.ToString())
+
+                Dim asm As New AgcAssembler()
+                asm.SourceDirectory = dir
+                asm.MainFile = "MAIN.agc"
+                Dim ok As Boolean = asm.Assemble()
+                Check(ok, "interpretive program assembles", asm.Diagnostics.FormatAll(10))
+                If Not ok Then Return
+
+                Dim machine As New AgcMachine(asm.Image, asm.Symbols, asm.Diagnostics)
+                machine.AttachConsole()
+                machine.Reset()
+                machine.Interpreter.TraceEnabled = True
+                machine.Cpu.TraceFallback = True
+                Console.WriteLine("  interp attached = " & (machine.Cpu.Interpreter IsNot Nothing).ToString() &
+                                  " ; Z at start = " & AgcWord.ToOctal(machine.Cpu.Z) &
+                                  " ; word at 04000 = " & AgcWord.ToOctal(machine.Memory.ReadFixed(&H800)))
+
+                ' DLOAD and DAD are each two basic words.  Step one instruction at a
+                ' time and inspect MPAC (erasable words 0 and 1).
+                machine.StepOne()                     ' DLOAD ONE
+                Dim mpac1 As Integer = machine.Interpreter.Mpac
+                Check(mpac1 <> 0, "DLOAD loaded a non-zero MPAC",
+                      "MPAC=" & mpac1.ToString())
+
+                machine.StepOne()                     ' DAD TWO
+                Dim mpac2 As Integer = machine.Interpreter.Mpac
+                Console.WriteLine("  MPAC after DLOAD = " & mpac1.ToString() &
+                                  " ; after DAD = " & mpac2.ToString() &
+                                  " ; Z=" & AgcWord.ToOctal(machine.Cpu.Z))
+                Check(mpac1 = 1, "DLOAD 1.0 puts 1 in MPAC", "MPAC=" & mpac1.ToString())
+                Check(mpac2 = 3, "DLOAD 1.0 then DAD 2.0 gives 3",
+                      "MPAC " & mpac1.ToString() & " -> " & mpac2.ToString())
+
+                machine.StepOne()                     ' DCOMP
+                Dim mpac3 As Integer = machine.Interpreter.Mpac
+                Check(mpac3 = -3, "DCOMP negates MPAC",
+                      "MPAC " & mpac2.ToString() & " -> " & mpac3.ToString())
+
+                machine.StepOne()                     ' DCOMP
+                Dim mpac4 As Integer = machine.Interpreter.Mpac
+                Check(mpac4 = 3, "a second DCOMP restores MPAC",
+                      "MPAC " & mpac4.ToString() & " vs " & mpac2.ToString())
+
+                Check(machine.Interpreter.InstructionCount = 4,
+                      "the interpreter executed four instructions",
+                      machine.Interpreter.InstructionCount.ToString() & " executed")
+                Check(Not machine.Cpu.Halted, "the CPU did not halt",
+                      machine.Cpu.HaltReason)
+            Finally
+                Try
+                    Directory.Delete(dir, True)
+                Catch
+                End Try
+            End Try
+        End Sub
 
         ''' <summary>
         ''' Assemble a short program, run it, and check the machine state at the
@@ -237,40 +284,35 @@ Namespace Agc
                 Dim asm As New AgcAssembler()
                 asm.SourceDirectory = dir
                 asm.MainFile = "MAIN.agc"
+                asm._debugEncoding = True
                 asm.Assemble()
+                asm._debugEncoding = False
 
                 ' The interpretive opcode is a word whose value is the complement of
-                ' (code + 1), so the check is just that the word is not a plain
-                ' instruction and that the operand word follows it.  The operand
-                ' word of an interpretive instruction is the address of its
-                ' argument, which is what the runtime loads into MPAC.
+                ' (code + 1); the operand word follows it.
+                '
+                ' DLOAD, DAD and the other double-precision instructions point at
+                ' the LOW word of their argument, because the interpretive engine
+                ' loads the low word and pairs it with the next lower address.  A
+                ' "2DEC 1.0" at A therefore occupies A-1 (high) and A (low), and
+                ' DLOAD A encodes A + 1, not A.
                 Dim aPseudo As Integer = asm.Lookup("A")
                 Dim bPseudo As Integer = asm.Lookup("B")
-                Dim cPseudo As Integer = asm.Lookup("C")
                 Dim aAddr As AgcAddress = AgcCodec.PseudoToAddress(aPseudo)
+                Dim bAddr As AgcAddress = AgcCodec.PseudoToAddress(bPseudo)
                 Dim dloadOpcode As Integer = asm.Image.GetFixed(2, 2048)
-                Dim operandWord As Integer = asm.Image.GetFixed(2, 2049)
-                Console.WriteLine("  Lookup A pseudo=" & aPseudo.ToString() & " B=" & bPseudo.ToString() &
-                                  " C=" & cPseudo.ToString())
+                Dim dloadOperand As Integer = asm.Image.GetFixed(2, 2049)
+                Dim dadOperand As Integer = asm.Image.GetFixed(2, 2051)
                 Console.WriteLine("  A addr=" & aAddr.ToString() &
-                                  " banked=" & aAddr.Banked.ToString() &
-                                  " sreg=" & AgcWord.ToOctal(aAddr.SReg))
-                Console.WriteLine("  DLOAD opcode=" & AgcWord.ToOctal(dloadOpcode) &
-                                  " operand=" & AgcWord.ToOctal(operandWord))
-                Console.WriteLine("  words at 4000..4011: " &
-                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2048)) & " " &
-                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2049)) & " " &
-                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2050)) & " " &
-                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2051)) & " " &
-                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2052)) & " " &
-                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2053)) & " " &
-                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2054)) & " " &
-                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2055)))
+                                  " B addr=" & bAddr.ToString() &
+                                  " DLOAD opcode=" & AgcWord.ToOctal(dloadOpcode) &
+                                  " operand=" & AgcWord.ToOctal(dloadOperand) &
+                                  " DAD operand=" & AgcWord.ToOctal(dadOperand))
 
-                ' The decoder must see DLOAD, not some other instruction.
-                Dim candidates As List(Of String) = AgcOpcodeTable.CandidatesForWord(dloadOpcode)
-                Console.WriteLine("  DLOAD decodes as: " & String.Join(", ", candidates.ToArray()))
-                CheckEqual(operandWord, aAddr.SReg, "DLOAD operand word holds the address of A")
+                CheckEqual(dloadOperand, (aAddr.SReg + 1) And AgcWord.Mask15,
+                           "DLOAD operand is the low word of A")
+                CheckEqual(dadOperand, (bAddr.SReg + 1) And AgcWord.Mask15,
+                           "DAD operand is the low word of B")
                 Check(dloadOpcode <> 0, "DLOAD opcode word is non-zero")
             Finally
                 Try

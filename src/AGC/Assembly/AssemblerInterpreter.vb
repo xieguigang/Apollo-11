@@ -47,23 +47,27 @@ Namespace Agc
             word = (AgcWord.Mask15 And Not word) And AgcWord.Mask15
             EmitAndAdvance(New Integer() {word})
 
-            ' Queue up the operands.
+            ' Queue up the operands.  An interpretive instruction's first operand
+            ' is written on the same source line as the opcode ("DLOAD A"), so it
+            ' must be consumed here; only operands that do not fit on this line
+            ' are left pending for the following lines.
             _interpNnnn.Clear()
             _interpSwitchInc.Clear()
             _interpSwitchInvert.Clear()
             _interpOperandsPending = 0
+            _interpIndex = 0
 
             QueueInterpreterOperands(entry)
             If secondEntry IsNot Nothing Then QueueInterpreterOperands(secondEntry)
 
-            ' The first operand is taken from the modifier fields of this line.
-            If _interpOperandsPending > 0 AndAlso Not String.IsNullOrEmpty(line.Mod1) Then
+            If _interpOperandsPending > 0 AndAlso Not String.IsNullOrEmpty(line.Operand) Then
                 Dim synthetic As New AgcLine()
                 synthetic.File = line.File
                 synthetic.LineNumber = line.LineNumber
                 synthetic.Opcode = ""
-                synthetic.Operand = line.Mod1
-                synthetic.Mod1 = line.Mod2
+                synthetic.Operand = line.Operand
+                synthetic.Mod1 = line.Mod1
+                synthetic.Mod2 = line.Mod2
                 ProcessInterpretiveOperandLine(synthetic)
             End If
         End Sub
@@ -176,11 +180,15 @@ Namespace Agc
                 Else
                     encoded = EncodeInterpreterAddress(resolved, switchInc, argType)
                 End If
-                If _debugEncoding AndAlso _pc.SReg >= 2048 AndAlso _pc.SReg <= 2064 Then
-                    Console.WriteLine("IOPND at " & _pc.ToString() & " text=[" & text &
-                                      "] resolved=" & resolved.ToString() &
-                                      " sreg=" & AgcWord.ToOctal(resolved.SReg) &
-                                      " encoded=" & AgcWord.ToOctal(encoded))
+                If _debugEncoding Then
+                    Console.WriteLine("IOPND op=" & _pass.ToString() & " pc=" & _pc.ToString() &
+                                      " text=[" & text & "] resolved=" & resolved.ToString() &
+                                      " fixed=" & resolved.IsFixed.ToString() &
+                                      " banked=" & resolved.Banked.ToString() &
+                                      " const=" & isConstant.ToString() &
+                                      " constVal=" & AgcWord.ToOctal(constantValue) &
+                                      " switchInc=" & switchInc.ToString() &
+                                      " enc=" & AgcWord.ToOctal(encoded))
                 End If
                 EmitAtCurrent(encoded)
                 Advance(1)

@@ -329,6 +329,16 @@ Namespace Agc
             AddInterp("DSU", &H69, 1, 0, 0, 1)
             AddInterp("DSU*", &H6B, 1, 0, 0, 1)
             AddInterp("EXIT", &H0)
+
+            ' The STORE family are interpretive instructions whose second word is
+            ' the operand address advanced by one so that the store lands after the
+            ' argument.  They must be registered here, otherwise the assembler
+            ' treats them as unknown and emits a zero word without an operand.
+            ' The encoding itself is produced by EncodeInterpreterStore().
+            AddInterp("STORE", &H0, 1, 0, 0, 0, 1)
+            AddInterp("STODL", &H0, 1, 0, 0, 0, 1)
+            AddInterp("STOVL", &H0, 1, 0, 0, 0, 1)
+            AddInterp("STCALL", &H0, 1, 0, 0, 0, 1)
             AddInterp("GOTO", &H56, 1)
             AddInterp("INCR,1", &H36, 1)
             AddInterp("INCR,2", &H32, 1)
