@@ -99,6 +99,8 @@ Namespace Agc
                     CommandInfo(rest)
                 Case "selftest"
                     CommandSelfTest()
+                Case "compare"
+                    CommandCompare(rest)
                 Case "probe"
                     If rest.Count > 0 Then
                         DebugProbe.DumpLines(rest(0), New Integer() {34, 108, 116, 118})
@@ -296,6 +298,66 @@ Namespace Agc
                 Console.WriteLine("All self tests passed.")
             Else
                 Console.WriteLine(failures.ToString() & " self test(s) failed.")
+            End If
+        End Sub
+
+        ''' <summary>
+        ''' Assemble a program and compare the rope image against a published
+        ''' ".binsource" octal listing.
+        ''' </summary>
+        Private Sub CommandCompare(rest As List(Of String))
+            Dim positional As New List(Of String)()
+            For Each a As String In rest
+                If Not a.StartsWith("-", StringComparison.Ordinal) Then positional.Add(a)
+            Next
+            If positional.Count < 2 Then
+                Console.Error.WriteLine("compare requires <source-dir> <binsource-file>")
+                Return
+            End If
+
+            Dim sourceDir As String = ResolveSourceDirectory(positional(0))
+            If sourceDir = "" Then
+                Console.Error.WriteLine("Source directory not found: " & positional(0))
+                Return
+            End If
+            Dim referenceFile As String = positional(1)
+            If Not File.Exists(referenceFile) Then
+                Console.Error.WriteLine("Reference file not found: " & referenceFile)
+                Return
+            End If
+
+            Dim asm As AgcAssembler = CreateAssembler(sourceDir, False)
+            Console.WriteLine("Assembling " & asm.ProgramName & "...")
+            asm.Assemble()
+            Console.WriteLine("Assembled " & asm.EmittedWords.ToString("N0") & " words, " &
+                              asm.Diagnostics.ErrorCount.ToString("N0") & " errors.")
+
+            Dim source As New AgcBinSource()
+            source.Load(referenceFile)
+            Console.WriteLine("Reference has " & source.BankCount().ToString() & " banks.")
+            If source.Errors.Count > 0 Then
+                Console.WriteLine("Reference parse problems: " & source.Errors.Count.ToString())
+                For i As Integer = 0 To Math.Min(3, source.Errors.Count - 1)
+                    Console.WriteLine("  " & source.Errors(i))
+                Next
+            End If
+
+            Dim cmp As New AgcRopeComparer()
+            cmp.Compare(asm.Image, source)
+
+            Console.WriteLine()
+            Console.WriteLine("Words matching the reference : " & cmp.SameCount.ToString("N0"))
+            Console.WriteLine("Words differing             : " & cmp.DifferCount.ToString("N0"))
+            If cmp.SameCount + cmp.DifferCount > 0 Then
+                Dim pct As Double = 100.0 * cmp.SameCount / (cmp.SameCount + cmp.DifferCount)
+                Console.WriteLine("Match rate                  : " & pct.ToString("0.00") & " %")
+            End If
+            If cmp.Mismatches.Count > 0 Then
+                Console.WriteLine()
+                Console.WriteLine("First mismatches:")
+                For Each m As String In cmp.Mismatches
+                    Console.WriteLine("  " & m)
+                Next
             End If
         End Sub
 

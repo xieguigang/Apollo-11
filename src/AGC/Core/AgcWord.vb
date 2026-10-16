@@ -176,9 +176,10 @@ Namespace Agc
         ' ------------------------------------------------------------------
 
         ''' <summary>
-        ''' Parse the integer literal syntax understood by the AGC assembler: a
-        ''' token of 0-7 digits is octal, while an "8", a "9" or a trailing "D"
-        ''' makes it decimal.
+        ''' Parse an integer literal exactly the way the AGC assembler does
+        ''' (GetOctOrDec): a token made only of digits 0-7 is OCTAL -- so "4000" is
+        ''' 04000, not four thousand -- while a token containing an 8 or a 9, or
+        ''' ending in "D", is decimal.  "&amp;O" forces octal.
         ''' </summary>
         Public Function TryParseInteger(text As String, ByRef value As Integer) As Boolean
             value = 0
@@ -196,37 +197,46 @@ Namespace Agc
             End If
             If i >= s.Length Then Return False
 
-            Dim isDecimal As Boolean = False
-            Dim digits As New Text.StringBuilder()
+            ' An explicit "&O" prefix forces octal.
+            Dim forceOctal As Boolean = False
+            If i + 1 < s.Length AndAlso s(i) = "&"c AndAlso Char.ToUpperInvariant(s(i + 1)) = "O"c Then
+                forceOctal = True
+                i += 2
+            End If
+
+            Dim body As New Text.StringBuilder()
+            Dim has8or9 As Boolean = False
             While i < s.Length
                 Dim c As Char = s(i)
                 If c >= "0"c AndAlso c <= "9"c Then
-                    If c = "8"c OrElse c = "9"c Then isDecimal = True
-                    digits.Append(c)
+                    If c = "8"c OrElse c = "9"c Then has8or9 = True
+                    body.Append(c)
                     i += 1
                 Else
                     Exit While
                 End If
             End While
+            If body.Length = 0 Then Return False
 
             Dim tail As String = s.Substring(i).ToUpperInvariant()
-            Select Case tail
-                Case ""
-                Case "D"
-                    isDecimal = True
-                Case "B", "O", "Q"
-                    isDecimal = False
-                Case Else
-                    Return False
-            End Select
-            If digits.Length = 0 Then Return False
+            Dim isDecimal As Boolean
+            If forceOctal Then
+                isDecimal = False
+                If tail <> "" Then Return False
+            ElseIf tail = "D" Then
+                isDecimal = True
+            ElseIf tail = "" Then
+                isDecimal = has8or9
+            Else
+                Return False
+            End If
 
             Dim raw As Long
             If isDecimal Then
-                If Not Long.TryParse(digits.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, raw) Then Return False
+                If Not Long.TryParse(body.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, raw) Then Return False
             Else
                 raw = 0L
-                For Each c As Char In digits.ToString()
+                For Each c As Char In body.ToString()
                     If c < "0"c OrElse c > "7"c Then Return False
                     raw = raw * 8L + CLng(AscW(c) - AscW("0"c))
                 Next

@@ -149,6 +149,8 @@ Namespace Agc
             AddBasic("INCR", &H6000, OperandFlags.QC2)
             AddBasic("ADS", &H7000, OperandFlags.QC2)
             AddBasic("CA", &H9000, OperandFlags.Number)
+            AddBasic("CAF", &H9000, OperandFlags.Fixed Or OperandFlags.Number)
+            AddBasic("CAE", &H9000, OperandFlags.Erasable Or OperandFlags.Number)
             AddBasic("CS", &HA000, OperandFlags.Number)
             AddBasic("INDEX", &HC000)
             AddBasic("NDX", &HC000)

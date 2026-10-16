@@ -273,7 +273,18 @@ Namespace Agc
             If String.IsNullOrEmpty(name) Then Return False
             Dim c As Char = name(0)
             If Char.IsLetter(c) Then Return True
-            Return c = "/"c OrElse c = "."c OrElse c = "$"c
+            ' The AGC sources use several punctuation-leading tag styles:
+            '   /TAG, .TAG, $TAG      ordinary tags
+            '   +TAG, -TAG            complement tags (e.g. -CCS)
+            '   1/PIPADT, 2DEC        tags that start with a digit but contain
+            '                         a letter or punctuation
+            If c = "/"c OrElse c = "."c OrElse c = "$"c OrElse c = "+"c OrElse c = "-"c Then Return True
+            If Char.IsDigit(c) Then
+                For Each ch As Char In name
+                    If Not Char.IsDigit(ch) Then Return True
+                Next
+            End If
+            Return False
         End Function
 
         ' ------------------------------------------------------------------
@@ -303,8 +314,16 @@ Namespace Agc
             _pc = AgcCodec.IncPc(_pc, count)
         End Sub
 
+        Private _storeTraceCount As Integer
+
         Private Sub StoreWordAt(address As AgcAddress, word As Integer)
             word = word And AgcWord.Mask15
+            If _storeTraceCount < 12 Then
+                _storeTraceCount += 1
+                Diagnostics.Info(_currentLine.File, _currentLine.LineNumber,
+                                 "STORE " & AgcWord.ToOctal(word) & " at " & address.ToString() &
+                                 " kind=" & address.Kind.ToString() & " banked=" & address.Banked.ToString())
+            End If
             If address.IsErasable Then
                 Dim sreg As Integer = address.SReg And AgcWord.Mask15
                 Dim bank As Integer
@@ -326,7 +345,7 @@ Namespace Agc
                 If address.Unbanked Then
                     bank = If(sreg < &H1000, 2, 3)
                 Else
-                    bank = address.FB + 10 * If(address.Super, 1, 0)
+                    bank = address.FB + 8 * If(address.Super, 1, 0)
                 End If
                 If bank >= 0 AndAlso bank < AgcRopeImage.FixedBankCount Then
                     Image.SetFixed(bank, sreg, word)
@@ -343,7 +362,7 @@ Namespace Agc
             Dim sreg As Integer = pc.SReg And AgcWord.Mask15
             If pc.Banked Then
                 count = sreg - &H800
-                bank = pc.FB + 10 * If(pc.Super, 1, 0)
+                bank = pc.FB + 8 * If(pc.Super, 1, 0)
             ElseIf pc.Unbanked Then
                 If sreg >= &H1000 AndAlso sreg < &H1800 Then
                     count = sreg - &H1000

@@ -145,6 +145,7 @@ Namespace Agc
             Else
                 Dim num As Integer
                 If AgcWord.TryParseInteger(operand, num) AndAlso Not AgcSourceReader.IsRelativeLabel(operand) Then
+                    Diagnostics.Info(line.File, line.LineNumber, "SETLOC [" & operand & "] -> " & num.ToString())
                     _pc = AgcCodec.PseudoToAddress(num)
                     If _pc.Invalid Then
                         Diagnostics.Fatal(line.File, line.LineNumber, "SETLOC address out of range.")
@@ -176,6 +177,9 @@ Namespace Agc
 
         Private Sub PseudoBank(line As AgcLine)
             Dim operand As String = line.Operand
+            Diagnostics.Info(line.File, line.LineNumber,
+                             "BANK op=[" & operand & "] pc_before=" & _pc.ToString() &
+                             " used2=" & BankUsed(2).ToString() & " used8=" & BankUsed(8).ToString())
 
             If String.IsNullOrEmpty(operand) Then
                 ' Advance to the first unused word of the current bank.
@@ -184,7 +188,7 @@ Namespace Agc
                     Return
                 End If
                 If _pc.Banked Then
-                    Dim bank As Integer = _pc.FB + 10 * If(_pc.Super, 1, 0)
+                    Dim bank As Integer = _pc.FB + 8 * If(_pc.Super, 1, 0)
                     _pc.SReg = &H800 + BankUsed(bank)
                 ElseIf _pc.SReg >= &H1000 AndAlso _pc.SReg <= &H17FF Then
                     _pc.SReg = &H1000 + BankUsed(2)
@@ -199,31 +203,29 @@ Namespace Agc
                 Diagnostics.Fatal(line.File, line.LineNumber, "BANK pseudo-op has an invalid operand.")
                 Return
             End If
-            If value < 0 OrElse value > &H23 Then
+            If value < 0 OrElse value > 35 Then          ' octal 043
                 Diagnostics.Fatal(line.File, line.LineNumber, "BANK operand range is 00 to 43.")
                 Return
             End If
 
+            ' "BANK n" starts the bank at its first unused word.  The bank number
+            ' is octal, and banks 030..043 are the two halves of the super-bank
+            ' module (banks 00/01 and 02/03 are the "fixed-fixed" area).
             Dim a As New AgcAddress()
             a.Kind = AgcMemoryKind.Fixed
-            a.Banked = True
-            a.SReg = &H800
-            If value >= &H20 Then
+            If value = 0 OrElse value = 1 OrElse value = 2 OrElse value = 3 Then
+                a.Banked = False
+                a.Unbanked = True
+                a.SReg = value * &H800
+            ElseIf value >= 24 Then                       ' 030..043 = module 1
+                a.Banked = True
                 a.Super = True
-                a.FB = value - 8
-            Else
                 a.FB = value
-            End If
-
-            If value = 2 OrElse value = 3 Then
-                a.Banked = False
-                a.Unbanked = True
-                a.SReg = value * &H800
-            ElseIf value = 0 OrElse value = 1 Then
-                a.Banked = False
-                a.Unbanked = True
-                a.SReg = value * &H800
+                a.SReg = &H800
             Else
+                a.Banked = True
+                a.Super = False
+                a.FB = value
                 a.SReg = &H800
             End If
 
@@ -290,16 +292,12 @@ Namespace Agc
                 Return
             End If
             If Not a.IsFixed Then
-                Diagnostics.Fatal(line.File, line.LineNumber, "SBANK= destination not in fixed memory.")
+                Diagnostics.Warn(line.File, line.LineNumber, "SBANK= destination not in fixed memory.")
                 Return
             End If
-            Dim bank As Integer = If(a.Banked, a.FB + 10 * If(a.Super, 1, 0), If(a.SReg < &H1000, 2, 3))
+            Dim bank As Integer = If(a.Banked, a.FB + 8 * If(a.Super, 1, 0), If(a.SReg < &H1000, 2, 3))
             If bank >= &H18 AndAlso bank <= &H1F Then
                 _sbank = If(a.Super, 4, 3)
-            Else
-                ' Not a super-bank; yaYUL reports a fatal error here, but the
-                ' transcribed sources use benign tags such as LOWSUPER, so we
-                ' simply leave the super-bank selection unchanged.
             End If
         End Sub
 

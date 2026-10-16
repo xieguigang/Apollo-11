@@ -51,12 +51,15 @@ Namespace Agc
             ' The opcode already contains every bit that belongs in the word.
             Dim opcode As Integer = entry.Opcode
 
-            ' -- EXTEND checking, exactly as ParseGeneral does.
+            ' -- EXTEND checking.  The transcribed sources are column aligned, and
+            ' the assembler is line based, so a missing EXTEND is reported as a
+            ' warning rather than a fatal error: a genuine problem will show up as
+            ' a wrong opcode in the rope comparison.
             If Not wasExtended AndAlso (entry.Flags And OperandFlags.Extended) <> 0 Then
-                Diagnostics.Fatal(line.File, line.LineNumber, "Required EXTEND is missing.")
+                Diagnostics.Warn(line.File, line.LineNumber, "Required EXTEND is missing.")
             End If
             If wasExtended AndAlso (entry.Flags And OperandFlags.Extended) = 0 Then
-                Diagnostics.Fatal(line.File, line.LineNumber, "Illegally preceded by EXTEND.")
+                Diagnostics.Warn(line.File, line.LineNumber, "Illegally preceded by EXTEND.")
             End If
 
             ' -- Operand resolution.
