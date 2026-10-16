@@ -141,21 +141,17 @@ Namespace Agc
                 Check(rt2 = -3, "MPAC round-trips -3", "got " & rt2.ToString())
 
                 ' Step through the interpretive program one instruction at a time.
-                ' DLOAD and DAD are two basic words each, DCOMP and EXIT one (the
-                ' interpretive operand word was already consumed by the opcode).
-                machine.Interpreter.TraceEnabled = True
+                ' DLOAD and DAD are two basic words each; DCOMP and EXIT are a single
+                ' word because they take no operand.
                 For stepNo As Integer = 1 To 4
-                    Console.WriteLine("  --- step " & stepNo.ToString() &
-                                      " at Z=" & AgcWord.ToOctal(machine.Cpu.Z))
                     machine.StepOne()
-                    Console.WriteLine("      MPAC=" & machine.Interpreter.Mpac.ToString() &
-                                      " Z=" & AgcWord.ToOctal(machine.Cpu.Z))
                 Next
-                machine.Interpreter.TraceEnabled = False
+                Console.WriteLine("  final MPAC=" & machine.Interpreter.Mpac.ToString() &
+                                  " Z=" & AgcWord.ToOctal(machine.Cpu.Z))
 
                 Dim mpacFinal As Integer = machine.Interpreter.Mpac
-                Check(mpacFinal = 3, "two DCOMPs restore MPAC",
-                      "MPAC " & mpacFinal.ToString() & " vs 3")
+                Check(mpacFinal = 3, "DLOAD 1.0, DAD 2.0, DCOMP, DCOMP leaves 3",
+                      "MPAC " & mpacFinal.ToString())
 
                 Check(machine.Interpreter.InstructionCount = 4,
                       "the interpreter executed four instructions",

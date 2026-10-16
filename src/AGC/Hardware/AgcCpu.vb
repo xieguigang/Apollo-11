@@ -953,8 +953,10 @@ Namespace Agc
                             operandWord = Memory.ReadFixed(operandAddr)
                         End If
                         If Interpreter.Execute(instruction, operandWord) Then
-                            ' The interpretive instruction occupied two basic words.
-                            NextZ = (programCounter + 2) And &HFFF
+                            ' Advance past however many words the instruction took:
+                            ' one for the operand-free forms, two when a separate
+                            ' operand word follows.
+                            NextZ = (programCounter + Interpreter.WordsConsumed) And &HFFF
                             executedTc = True
                         Else
                             Halted = True

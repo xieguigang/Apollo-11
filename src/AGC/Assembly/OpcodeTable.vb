@@ -116,6 +116,21 @@ Namespace Agc
             Return False
         End Function
 
+        ''' <summary>
+        ''' True when the interpretive instruction needs a separate operand word.
+        ''' Operand-free forms (DCOMP, DSQ, EXIT, PUSH, DDOUBL, ...) are a single
+        ''' basic word, so the caller must not advance past a phantom operand.
+        ''' </summary>
+        Public Function InterpretiveTakesOperand(code As Integer) As Boolean
+            If code < 0 Then Return False
+            For Each pair As KeyValuePair(Of String, AgcOpcode) In _interpretive
+                If pair.Value.InterpreterCode = code Then
+                    Return pair.Value.InterpreterOperands > 0
+                End If
+            Next
+            Return False
+        End Function
+
         Public Function TryGetInterpretive(name As String, ByRef op As AgcOpcode) As Boolean
             Return _interpretive.TryGetValue(name, op)
         End Function

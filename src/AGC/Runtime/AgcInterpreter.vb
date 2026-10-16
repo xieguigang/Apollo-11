@@ -226,18 +226,22 @@ Namespace Agc
         ''' Returns True when the instruction was understood.
         ''' </summary>
         ''' <summary>
+        ''' Number of basic words the instruction just executed occupied.  Most
+        ''' interpretive instructions are an opcode word followed by an operand word,
+        ''' but one-operand-free forms such as DCOMP, DSQ, EXIT, PUSH and DDOUBL are a
+        ''' single word.  The caller must advance the program counter by exactly this
+        ''' many words or it will step over the next instruction.
+        ''' </summary>
+        Public Property WordsConsumed As Integer
+
+        ''' <summary>
         ''' Execute the interpretive instruction selected by <paramref name="word"/>.
-        ''' Returns True when the instruction was understood.
-        '''
-        ''' An instruction word is "077777 &amp; ~((code1+1) | ((code2+1) &lt;&lt; 7))",
-        ''' so both fields must be decoded and the one that names a real
-        ''' instruction selected.  The assembler writes a second opcode into bits
-        ''' 7-13 for the combined forms, which means a word can carry two codes and
-        ''' a naive read of the low field alone picks the wrong one.  Resolving
-        ''' both against the instruction table removes the guesswork.
+        ''' Returns True when the instruction was understood; examine
+        ''' <see cref="WordsConsumed"/> for how far the program counter should move.
         ''' </summary>
         Public Function Execute(word As Integer, operand As Integer) As Boolean
             InstructionCount += 1
+            WordsConsumed = 2
 
             Dim halves As Integer = AgcWord.Mask15 Xor (word And AgcWord.Mask15)
             Dim code1 As Integer = (halves And &H7F) - 1
@@ -264,7 +268,12 @@ Namespace Agc
             End If
 
             If code < 0 Then Return False
-            Return ExecuteCode(code, operand)
+
+            Dim ok As Boolean = ExecuteCode(code, operand)
+            If ok Then
+                WordsConsumed = If(AgcOpcodeTable.InterpretiveTakesOperand(code), 2, 1)
+            End If
+            Return ok
         End Function
 
         Private Function ExecuteCode(code As Integer, operand As Integer) As Boolean
