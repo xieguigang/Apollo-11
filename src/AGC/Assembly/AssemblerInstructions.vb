@@ -185,13 +185,17 @@ Namespace Agc
                 End If
                 If _pc.Banked Then
                     Dim bank As Integer = _pc.FB + 8 * If(_pc.Super, 1, 0)
-                    _pc.SReg = &H800 + BankUsed(bank)
+                    _pc.SReg = &H800 + NextFreeInBank(bank)
+                ElseIf _pc.SReg >= 4096 Then
+                    ' Banks 02 and 03 written as 010000..017777.
+                    Dim bank As Integer = 2 + (_pc.SReg - 4096) \ 1024
+                    _pc.SReg = ((_pc.SReg - 4096) \ 1024) * 1024 + 4096 + NextFreeInBank(bank)
                 ElseIf _pc.SReg >= &H800 AndAlso _pc.SReg <= &HBFF Then
-                    ' Bank 02 occupies 04000..05777.
-                    _pc.SReg = &H800 + BankUsed(2)
+                    ' Bank 02 in its fixed-fixed guise: 04000..05777.
+                    _pc.SReg = &H800 + NextFreeInBank(2)
                 ElseIf _pc.SReg >= &HC00 AndAlso _pc.SReg <= &HFFF Then
-                    ' Bank 03 occupies 06000..07777.
-                    _pc.SReg = &HC00 + BankUsed(3)
+                    ' Bank 03: 06000..07777.
+                    _pc.SReg = &HC00 + NextFreeInBank(3)
                 End If
                 Return
             End If
@@ -207,29 +211,40 @@ Namespace Agc
             End If
 
             ' "BANK n" starts the bank at its first unused word.  The bank number
-            ' is octal, and banks 030..043 are the two halves of the super-bank
-            ' module (banks 00/01 and 02/03 are the "fixed-fixed" area).
+            ' is octal.  Banks 00..03 are the "fixed-fixed" area, which is written
+            ' as 000000/004000 for banks 0 and 1 and as 010000/014000 for banks
+            ' 02 and 03.  Banks 030..043 are the two halves of the super-bank
+            ' module and are written as 030000 upwards.
             Dim a As New AgcAddress()
             a.Kind = AgcMemoryKind.Fixed
-            If value = 0 OrElse value = 1 OrElse value = 2 OrElse value = 3 Then
+            If value = 0 OrElse value = 1 Then
                 a.Banked = False
                 a.Unbanked = True
-                a.SReg = value * &H800
+                a.SReg = value * 2048 + NextFreeInBank(value)
+            ElseIf value = 2 OrElse value = 3 Then
+                a.Banked = False
+                a.Unbanked = True
+                a.SReg = 4096 + (value - 2) * 1024 + NextFreeInBank(value)
             ElseIf value >= 24 Then                       ' 030..043 = module 1
                 a.Banked = True
                 a.Super = True
                 a.FB = value
-                a.SReg = &H800
+                a.SReg = &H800 + NextFreeInBank(value)
             Else
                 a.Banked = True
                 a.Super = False
                 a.FB = value
-                a.SReg = &H800
+                a.SReg = &H800 + NextFreeInBank(value)
             End If
 
-            a.SReg += BankUsed(value)
             _pc = a
         End Sub
+
+        ''' <summary>Words already committed to a fixed bank, as a high-water mark.</summary>
+        Private Function NextFreeInBank(bank As Integer) As Integer
+            If bank < 0 OrElse bank >= AgcRopeImage.FixedBankCount Then Return 0
+            Return BankUsed(bank)
+        End Function
 
         Private Sub PseudoBlock(line As AgcLine)
             Dim value As Integer
@@ -242,16 +257,20 @@ Namespace Agc
                 Return
             End If
 
-            Dim used As Integer = BankUsed(value) + value * &H800
+            ' BLOCK 0   -> unswitched erasable
+            ' BLOCK 2,3 -> the two halves of the unswitched fixed window, which
+            '              begin at 010000 (bank 02) and 014000 (bank 03).
             Dim a As New AgcAddress()
-            a.SReg = used
             If value = 0 Then
                 a.Kind = AgcMemoryKind.Erasable
+                a.Unbanked = True
+                a.SReg = 0
                 _ebank = 0
             Else
                 a.Kind = AgcMemoryKind.Fixed
+                a.Unbanked = True
+                a.SReg = 4096 + (value - 2) * 2048 + NextFreeInBank(value)
             End If
-            a.Unbanked = True
             _pc = a
         End Sub
 

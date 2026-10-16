@@ -49,7 +49,6 @@ Namespace Agc
         ''' first unused word, so this must be a maximum, not a running total.
         ''' </summary>
         Private ReadOnly _usedInBank(AgcRopeImage.FixedBankCount - 1) As Integer
-
         Private _pendingExtend As Boolean
         Private _lines As List(Of AgcLine)
         Private _currentLine As AgcLine
@@ -347,7 +346,14 @@ Namespace Agc
                 Dim sreg As Integer = address.SReg And AgcWord.Mask15
                 Dim bank As Integer
                 If address.Unbanked Then
-                    bank = If(sreg < &H1000, 2, 3)
+                    ' The unswitched fixed window is written 010000..017777 for
+                    ' banks 02 and 03, and 04000..07777 for the same two banks in
+                    ' their "fixed-fixed" guise.
+                    If sreg >= 4096 Then
+                        bank = 2 + (sreg - 4096) \ 1024
+                    Else
+                        bank = If(sreg < &H1000, 2, 3)
+                    End If
                 Else
                     bank = address.FB + 8 * If(address.Super, 1, 0)
                 End If
@@ -357,7 +363,11 @@ Namespace Agc
             End If
         End Sub
 
-        ''' <summary>Update the per-bank high-water marks (yaYUL UpdateBankCounts).</summary>
+        ''' <summary>
+        ''' Update the per-bank high-water marks (yaYUL UpdateBankCounts).  The
+        ''' stored value is the number of words in use in the bank, i.e. the
+        ''' highest offset reached plus one.
+        ''' </summary>
         Private Sub UpdateBankCounts()
             Dim pc As AgcAddress = _pc
             If pc.Invalid OrElse Not pc.IsAddress OrElse Not pc.IsFixed OrElse pc.Overflow Then Return
@@ -365,16 +375,20 @@ Namespace Agc
             Dim bank As Integer
             Dim sreg As Integer = pc.SReg And AgcWord.Mask15
             If pc.Banked Then
-                count = sreg - &H800
+                count = sreg - &H800 + 1
                 bank = pc.FB + 8 * If(pc.Super, 1, 0)
             ElseIf pc.Unbanked Then
-                If sreg >= &H800 AndAlso sreg <= &HBFF Then
-                    ' Bank 02 occupies 04000..05777.
-                    count = sreg - &H800
+                If sreg >= 4096 AndAlso sreg <= 8191 Then
+                    ' Banks 02 and 03, written as 010000..017777.
+                    count = (sreg - 4096) Mod 1024 + 1
+                    bank = 2 + (sreg - 4096) \ 1024
+                ElseIf sreg >= &H800 AndAlso sreg <= &HBFF Then
+                    ' Bank 02 in its fixed-fixed guise: 04000..05777.
+                    count = sreg - &H800 + 1
                     bank = 2
                 ElseIf sreg >= &HC00 AndAlso sreg <= &HFFF Then
-                    ' Bank 03 occupies 06000..07777.
-                    count = sreg - &HC00
+                    ' Bank 03: 06000..07777.
+                    count = sreg - &HC00 + 1
                     bank = 3
                 Else
                     Return
@@ -383,6 +397,7 @@ Namespace Agc
                 Return
             End If
             If count < 0 Then count = 0
+            If count > AgcRopeImage.FixedBankWords Then count = AgcRopeImage.FixedBankWords
             If bank >= 0 AndAlso bank < AgcRopeImage.FixedBankCount AndAlso count > _usedInBank(bank) Then
                 _usedInBank(bank) = count
             End If
