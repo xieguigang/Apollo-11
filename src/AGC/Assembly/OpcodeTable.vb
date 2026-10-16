@@ -183,51 +183,52 @@ Namespace Agc
             ' value below is the instruction number times two.
             ' Each value is the instruction field the CPU switches on, which the
             ' reference engine computes as "(instruction >> 9) | 0100 when EXTEND
-            ' is set".  The comment on each line is the dispatch value the CPU's
-            ' Select Case expects, so the two sides cannot drift apart.
-            AddBasic("TC", &H0, OperandFlags.Number)                              ' 000
-            AddBasic("CCS", &H4000, OperandFlags.QC0 Or OperandFlags.Number)      ' 010
-            AddBasic("TCF", &H8000, OperandFlags.QCNot0)                          ' 020
-            AddBasic("LXCH", &H48000, OperandFlags.QC2 Or OperandFlags.Number)    ' 022
-            AddBasic("INCR", &H60000, OperandFlags.QC2)                           ' 024
-            AddBasic("ADS", &H68000, OperandFlags.QC2)                            ' 026
-            AddBasic("CA", &H18000, OperandFlags.Number)                          ' 030
-            AddBasic("CAF", &H18000, OperandFlags.Fixed Or OperandFlags.Number)
-            AddBasic("CAE", &H18000, OperandFlags.Erasable Or OperandFlags.Number)
-            AddBasic("CS", &H20000, OperandFlags.Number)                          ' 040
-            AddBasic("INDEX", &H50000)                                            ' 050
-            AddBasic("NDX", &H50000)
-            AddBasic("DXCH", &H54000, OperandFlags.QC1 Or OperandFlags.Plus1 Or OperandFlags.Number)  ' 052
-            AddBasic("TS", &H58000, OperandFlags.QC2 Or OperandFlags.Number)      ' 054
-            AddBasic("XCH", &H5C000, OperandFlags.QC3 Or OperandFlags.Number)     ' 056
-            AddBasic("AD", &H60000)                                               ' 060
-            AddBasic("MASK", &H70000)                                             ' 070
-            AddBasic("MSK", &H70000)
-            ' DAS occupies the same dispatch value as AD (060, so that DDOUBL
-            ' aliases AD); the CPU tells them apart by the quarter code.
-            AddBasic("DAS", &H60000, OperandFlags.QC0 Or OperandFlags.Plus1)
+            ' is set".  The table and the CPU's Select Case are therefore the two
+            ' halves of one contract, and the comment on each line is the dispatch
+            ' value the CPU expects.  The value written here is that dispatch
+            ' number shifted left nine places, e.g. CA is case 030 so it encodes as
+            ' 030 * 02000 octal = 06000, and "06000 >> 9 & 0177" is 030 again.
+            AddBasic("TC", &H0, OperandFlags.Number)                              ' 00
+            AddBasic("CCS", &H1000, OperandFlags.QC0 Or OperandFlags.Number)      ' 010
+            AddBasic("TCF", &H1400, OperandFlags.QCNot0)                          ' 012
+            AddBasic("DAS", &H2000, OperandFlags.QC0 Or OperandFlags.Plus1)       ' 020
+            AddBasic("LXCH", &H2400, OperandFlags.QC2 Or OperandFlags.Number)     ' 022
+            AddBasic("INCR", &H2800, OperandFlags.QC2)                            ' 024
+            AddBasic("ADS", &H2C00, OperandFlags.QC2)                             ' 026
+            AddBasic("CA", &H3000, OperandFlags.Number)                           ' 030
+            AddBasic("CAF", &H3000, OperandFlags.Fixed Or OperandFlags.Number)
+            AddBasic("CAE", &H3000, OperandFlags.Erasable Or OperandFlags.Number)
+            AddBasic("CS", &H4000, OperandFlags.Number)                           ' 040
+            AddBasic("INDEX", &H5000)                                             ' 050
+            AddBasic("NDX", &H5000)
+            AddBasic("DXCH", &H5400, OperandFlags.QC1 Or OperandFlags.Plus1 Or OperandFlags.Number)  ' 052
+            AddBasic("TS", &H5800, OperandFlags.QC2 Or OperandFlags.Number)       ' 054
+            AddBasic("XCH", &H5C00, OperandFlags.QC3 Or OperandFlags.Number)      ' 056
+            AddBasic("AD", &H6000)                                                ' 060
+            AddBasic("MASK", &H7000)                                              ' 070
+            AddBasic("MSK", &H7000)
 
             ' -- Extended instructions (EXTEND required).  The dispatch value is
-            ' the basic value plus 0100 (octal).
-            AddBasic("READ", &H20000, OperandFlags.Extended Or OperandFlags.Number)    ' 0100
-            AddBasic("WRITE", &H22000, OperandFlags.Extended Or OperandFlags.Number)   ' 0101
-            AddBasic("RAND", &H24000, OperandFlags.Extended Or OperandFlags.Number)    ' 0102
-            AddBasic("WAND", &H26000, OperandFlags.Extended Or OperandFlags.Number)    ' 0103
-            AddBasic("ROR", &H28000, OperandFlags.Extended Or OperandFlags.Number)     ' 0104
-            AddBasic("WOR", &H2A000, OperandFlags.Extended Or OperandFlags.Number)     ' 0105
-            AddBasic("RXOR", &H2C000, OperandFlags.Extended Or OperandFlags.Number)    ' 0106
-            AddBasic("EDRUPT", &H2E000, OperandFlags.Extended)                         ' 0107
-            AddBasic("DV", &H90000, OperandFlags.Extended Or OperandFlags.QCNot0)      ' 0110
-            AddBasic("BZF", &HA0000, OperandFlags.Extended Or OperandFlags.QCNot0)     ' 0112
-            AddBasic("MSU", &HA0000, OperandFlags.Extended Or OperandFlags.QCNot0)     ' 0120
-            AddBasic("QXCH", &HA4000, OperandFlags.Extended Or OperandFlags.QC2 Or OperandFlags.Number)  ' 0122
-            AddBasic("AUG", &HA8000, OperandFlags.Extended Or OperandFlags.QC2)        ' 0124
-            AddBasic("DIM", &HAC000, OperandFlags.Extended Or OperandFlags.QC2)        ' 0126
-            AddBasic("DCA", &HB0000, OperandFlags.Extended Or OperandFlags.Plus1 Or OperandFlags.Number) ' 0131
-            AddBasic("DCS", &HC0000, OperandFlags.Extended Or OperandFlags.Plus1 Or OperandFlags.Number) ' 0141
-            AddBasic("SU", &HE0000, OperandFlags.Extended Or OperandFlags.QCNot0)      ' 0160
-            AddBasic("BZMF", &HE4000, OperandFlags.Extended Or OperandFlags.QCNot0)    ' 0162
-            AddBasic("MP", &HF0000, OperandFlags.Extended)                             ' 0170
+            ' the basic value plus 0100 (octal), i.e. bit 6 of the field.
+            AddBasic("READ", &H8000, OperandFlags.Extended Or OperandFlags.Number)     ' 0100
+            AddBasic("WRITE", &H8200, OperandFlags.Extended Or OperandFlags.Number)    ' 0101
+            AddBasic("RAND", &H8400, OperandFlags.Extended Or OperandFlags.Number)     ' 0102
+            AddBasic("WAND", &H8600, OperandFlags.Extended Or OperandFlags.Number)     ' 0103
+            AddBasic("ROR", &H8800, OperandFlags.Extended Or OperandFlags.Number)      ' 0104
+            AddBasic("WOR", &H8A00, OperandFlags.Extended Or OperandFlags.Number)      ' 0105
+            AddBasic("RXOR", &H8C00, OperandFlags.Extended Or OperandFlags.Number)     ' 0106
+            AddBasic("EDRUPT", &H8E00, OperandFlags.Extended)                          ' 0107
+            AddBasic("DV", &H9000, OperandFlags.Extended Or OperandFlags.QCNot0)       ' 0110
+            AddBasic("BZF", &H9400, OperandFlags.Extended Or OperandFlags.QCNot0)      ' 0112
+            AddBasic("MSU", &HA000, OperandFlags.Extended Or OperandFlags.QCNot0)      ' 0120
+            AddBasic("QXCH", &HA400, OperandFlags.Extended Or OperandFlags.QC2 Or OperandFlags.Number)  ' 0122
+            AddBasic("AUG", &HA800, OperandFlags.Extended Or OperandFlags.QC2)         ' 0124
+            AddBasic("DIM", &HAC00, OperandFlags.Extended Or OperandFlags.QC2)         ' 0126
+            AddBasic("DCA", &HB000, OperandFlags.Extended Or OperandFlags.Plus1 Or OperandFlags.Number) ' 0130
+            AddBasic("DCS", &HC000, OperandFlags.Extended Or OperandFlags.Plus1 Or OperandFlags.Number) ' 0140
+            AddBasic("SU", &HE000, OperandFlags.Extended Or OperandFlags.QCNot0)       ' 0160
+            AddBasic("BZMF", &HE400, OperandFlags.Extended Or OperandFlags.QCNot0)     ' 0162
+            AddBasic("MP", &HF000, OperandFlags.Extended)                              ' 0170
 
             ' -- Aliases (the AGC assembler expands these in place).
             AddAlias("COM", "CS", "A")

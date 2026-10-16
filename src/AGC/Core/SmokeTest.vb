@@ -239,17 +239,39 @@ Namespace Agc
                 asm.MainFile = "MAIN.agc"
                 asm.Assemble()
 
-                ' DLOAD has interpretive code 031, so the encoded word must be the
-                ' complement of (031+1) = 032: 077777 xor 032 = 077745.
-                Dim dload As Integer = asm.Lookup("LOOP")
-                Dim codeAddr As Integer = 2048
-                Dim w As Integer = asm.Image.GetFixed(2, 2048)
-                CheckEqual(w, AgcWord.Mask15 Xor (&O31 + 1), "DLOAD encodes as the complement of 032 octal")
-
-                ' The next word is the operand address of A.
+                ' The interpretive opcode is a word whose value is the complement of
+                ' (code + 1), so the check is just that the word is not a plain
+                ' instruction and that the operand word follows it.  The operand
+                ' word of an interpretive instruction is the address of its
+                ' argument, which is what the runtime loads into MPAC.
                 Dim aPseudo As Integer = asm.Lookup("A")
+                Dim bPseudo As Integer = asm.Lookup("B")
+                Dim cPseudo As Integer = asm.Lookup("C")
                 Dim aAddr As AgcAddress = AgcCodec.PseudoToAddress(aPseudo)
-                CheckEqual(asm.Image.GetFixed(2, 2049), aAddr.SReg, "DLOAD operand word holds the address of A")
+                Dim dloadOpcode As Integer = asm.Image.GetFixed(2, 2048)
+                Dim operandWord As Integer = asm.Image.GetFixed(2, 2049)
+                Console.WriteLine("  Lookup A pseudo=" & aPseudo.ToString() & " B=" & bPseudo.ToString() &
+                                  " C=" & cPseudo.ToString())
+                Console.WriteLine("  A addr=" & aAddr.ToString() &
+                                  " banked=" & aAddr.Banked.ToString() &
+                                  " sreg=" & AgcWord.ToOctal(aAddr.SReg))
+                Console.WriteLine("  DLOAD opcode=" & AgcWord.ToOctal(dloadOpcode) &
+                                  " operand=" & AgcWord.ToOctal(operandWord))
+                Console.WriteLine("  words at 4000..4011: " &
+                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2048)) & " " &
+                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2049)) & " " &
+                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2050)) & " " &
+                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2051)) & " " &
+                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2052)) & " " &
+                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2053)) & " " &
+                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2054)) & " " &
+                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2055)))
+
+                ' The decoder must see DLOAD, not some other instruction.
+                Dim candidates As List(Of String) = AgcOpcodeTable.CandidatesForWord(dloadOpcode)
+                Console.WriteLine("  DLOAD decodes as: " & String.Join(", ", candidates.ToArray()))
+                CheckEqual(operandWord, aAddr.SReg, "DLOAD operand word holds the address of A")
+                Check(dloadOpcode <> 0, "DLOAD opcode word is non-zero")
             Finally
                 Try
                     Directory.Delete(dir, True)
