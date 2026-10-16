@@ -183,22 +183,17 @@ Namespace Agc
                     Diagnostics.Fatal(line.File, line.LineNumber, "BANK without operand requires fixed memory.")
                     Return
                 End If
-                If _pc.Banked Then
-                    Dim bank As Integer = _pc.FB + 8 * If(_pc.Super, 1, 0)
-                    _pc.SReg = &H800 + NextFreeInBank(bank)
-                ElseIf _pc.SReg >= 4096 Then
-                    If _pc.SReg <= 5119 Then
-                        _pc.SReg = 4096 + NextFreeInBank(2)
-                    Else
-                        _pc.SReg = 5120 + NextFreeInBank(3)
-                    End If
-                ElseIf _pc.SReg >= &H800 AndAlso _pc.SReg <= &HBFF Then
-                    ' Bank 02 in its fixed-fixed guise: 04000..05777.
-                    _pc.SReg = &H800 + NextFreeInBank(2)
-                ElseIf _pc.SReg >= &HC00 AndAlso _pc.SReg <= &HFFF Then
-                    ' Bank 03: 06000..07777.
-                    _pc.SReg = &HC00 + NextFreeInBank(3)
+                Dim sourceBank As Integer
+                If _pc.SReg < 2048 Then
+                    ' The low 1K of the fixed-fixed pair: bit 01000 says which of the
+                    ' sources' banks 00 and 01 it is.
+                    sourceBank = If((_pc.SReg And &H400) <> 0, 1, 0)
+                ElseIf _pc.FB = 2 Then
+                    sourceBank = 2
+                Else
+                    sourceBank = _pc.FB
                 End If
+                _pc = BankStartAddress(sourceBank, NextFreeInBank(sourceBank))
                 Return
             End If
 
@@ -212,46 +207,68 @@ Namespace Agc
                 Return
             End If
 
-            ' "BANK n" starts the bank at its first unused word.  The bank number
-            ' is octal.  Banks 00..03 are the "fixed-fixed" area, which is written
-            ' as 000000/004000 for banks 0 and 1 and as 010000/014000 for banks
-            ' 02 and 03.  Banks 030..043 are the two halves of the super-bank
-            ' module and are written as 030000 upwards.
-            Dim a As New AgcAddress()
-            a.Kind = AgcMemoryKind.Fixed
-            If value = 0 OrElse value = 1 Then                ' Banks 00 and 01 are written 000000..003777 and 004000..007777.
-                ' They live in the low half of physical banks 2 and 3; the high
-                ' half is reserved for the "BANK 2"/"BANK 3" view of the same
-                ' two banks.
-                a.Banked = False
-                a.Unbanked = True
-                a.SReg = 4096 + value * 1024 + NextFreeInBank(value)
-            ElseIf value = 2 OrElse value = 3 Then
-                a.Banked = False
-                a.Unbanked = True
-                a.SReg = 4096 + (value - 2) * 1024 + NextFreeInBank(value)
-            ElseIf value >= 24 Then                       ' 030..043 = module 1
-                a.Banked = True
-                a.Super = True
-                a.FB = value
-                a.SReg = &H800 + NextFreeInBank(value)
-            Else
-                a.Banked = True
-                a.Super = False
-                a.FB = value
-                a.SReg = &H800 + NextFreeInBank(value)
-            End If
-
-            _pc = a
+            _pc = BankStartAddress(value, NextFreeInBank(value))
         End Sub
 
         ''' <summary>
-        ''' Words already committed to an AGC bank, as a high-water mark.  Banks
-        ''' 00/01 and 02/03 share physical rope banks but are allocated
-        ''' independently, so the AGC bank number is used directly.
+        ''' The flat (pseudo) address of word <paramref name="offset"/> of a source
+        ''' bank, where the offset runs 0..01777 over that bank's 2K.
+        ''' </summary>
+        Public Shared Function BankPseudoAddress(bank As Integer, offset As Integer) As Integer
+            Return BankPseudoBase(bank) + (offset And 2047)
+        End Function
+
+        ''' <summary>
+        ''' The first unused word of a source bank, in that bank's 2K offset space.
+        ''' The fixed-fixed pair (banks 00..03) is addressed as bank 02; its low half
+        ''' is the sources' banks 00 and 02 and its high half banks 01 and 03, so
+        ''' both names for a half share one counter.
         ''' </summary>
         Private Function NextFreeInBank(bank As Integer) As Integer
-            Return BankUsage(bank)
+            If bank <= 3 Then
+                Dim low As Integer = BankUsage(0)
+                If low < 1024 Then Return low
+                Return 1024 + BankUsage(1)
+            End If
+            Dim slot As Integer = BinSlotOf(bank, 0)
+            Dim used As Integer = BankUsage(slot)
+            If used < 1024 Then Return used
+            Dim highSlot As Integer = BinSlotOf(bank, 1024)
+            If highSlot <> slot Then
+                Dim high As Integer = BankUsage(highSlot)
+                If high < 1024 Then Return 1024 + high
+            End If
+            Return used
+        End Function
+
+        ''' <summary>The segmented address of word <paramref name="offset"/> of a hardware bank.</summary>
+        Private Shared Function BankStartAddress(bank As Integer, offset As Integer) As AgcAddress
+            If offset < 0 Then offset = 0
+            If offset > 2047 Then offset = 2047
+            ' The fixed-fixed pair (hardware bank 02) is addressed as "02000 + offset"
+            ' so that bit 01000 marks the half of the 2K bank, exactly as the
+            ' hardware reads an operand field.  Every other bank is addressed as
+            ' "02000 + offset" too, with FB naming the bank.
+            Return AgcCodec.PseudoToAddress(BankPseudoBase(bank) + offset)
+        End Function
+
+        ''' <summary>
+        ''' The first unused word of AGC bank <paramref name="bank"/>, in the 2K
+        ''' offset space of that bank.  The word counters are per 1K block, following
+        ''' the published listing's bank numbering, so the block the caller is
+        ''' already in decides which counter to read.
+        ''' </summary>
+        Private Function NextFreeInBank(bank As Integer, offset As Integer) As Integer
+            Dim half As Integer
+            If bank <= 3 Then
+                half = (bank Mod 2) * 1024
+            Else
+                half = If(offset < 1024, 0, 1024)
+            End If
+            Dim used As Integer = BankUsage(BinBankOf(bank, half))
+            If used < 1024 Then Return half + used
+            Dim nextHalf As Integer = Math.Min(half + 1024, 2047)
+            Return nextHalf + BankUsage(BinBankOf(bank, nextHalf))
         End Function
 
         Private Sub PseudoBlock(line As AgcLine)
@@ -266,21 +283,18 @@ Namespace Agc
             End If
 
             ' BLOCK 0   -> unswitched erasable
-            ' BLOCK 2,3 -> the two halves of the unswitched fixed window, which
-            '              begin at 010000 (bank 02) and 014000 (bank 03).
-            Dim a As New AgcAddress()
+            ' BLOCK 2,3 -> the fixed-fixed area, 04000 and 06000 (the second halves
+            '              of AGC banks 02 and 03).
             If value = 0 Then
+                Dim a As New AgcAddress()
                 a.Kind = AgcMemoryKind.Erasable
                 a.Unbanked = True
                 a.SReg = 0
                 _ebank = 0
+                _pc = a
             Else
-                a.Kind = AgcMemoryKind.Fixed
-                a.Unbanked = True
-                ' BLOCK 2 -> 010000 (bank 02); BLOCK 3 -> 014000 (bank 03).
-                a.SReg = 4096 + (value - 2) * 1024 + NextFreeInBank(value)
+                _pc = BankStartAddress(value, NextFreeInBank(value, 0))
             End If
-            _pc = a
         End Sub
 
         Private Sub PseudoEbank(line As AgcLine)

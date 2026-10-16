@@ -71,17 +71,9 @@ Namespace Agc
                         EmitAndAdvance(New Integer() {0, 0})
                         Return
                     End If
-                    Dim w0 As Integer, w1 As Integer
-                    If a.SReg >= &H800 AndAlso a.SReg <= &HFFF Then
-                        w0 = ((a.FB << 10) Or (a.SReg - &H800)) And AgcWord.Mask15
-                        w1 = a.SReg And AgcWord.Mask15
-                    ElseIf a.SReg >= &H1000 AndAlso a.SReg <= &H1FFF Then
-                        w0 = a.SReg And AgcWord.Mask15
-                        w1 = a.SReg And AgcWord.Mask15
-                    Else
-                        Diagnostics.Fatal(line.File, line.LineNumber, "Internal error implementing 2FCADR.")
-                        w0 = 0 : w1 = 0
-                    End If
+                    ' Two words: the sub-address, then the bank word.
+                    Dim w0 As Integer = a.SReg And AgcWord.Mask15
+                    Dim w1 As Integer = ((BankFieldValue(a) And &H3F) << 10) Or ((SuperBankNibbleFor(a) And 7) << 4)
                     EmitAndAdvance(New Integer() {w0, w1})
 
                 Case AddressFormat.Ecadr
@@ -115,24 +107,66 @@ Namespace Agc
             End Select
         End Function
 
-        ''' <summary>BBCON / BBCON* -- a bank word: superbank in bits 4-6, F-bank in bits 10-14, E-bank in bits 0-2.</summary>
+        ''' <summary>
+        ''' The 6-bit bank field of a bank word (BBCON / 2CADR) for a fixed address.
+        ''' The field is the bank number the hardware sees in FBANK: the AGC bank
+        ''' number, except that the sources number the super-bank module 030..043
+        ''' while the hardware (and the ROR SUPERBNK dance the flight software uses
+        ''' to build these words) numbers it 024..035 -- so eight is added.
+        ''' </summary>
+        Private Shared Function BankFieldValue(a As AgcAddress) As Integer
+            Dim bank As Integer
+            If Not a.Banked Then
+                Dim agcBank As Integer = -1
+                Dim offset As Integer = -1
+                ResolveFixed(a, agcBank, offset)
+                bank = If(agcBank > 0, agcBank, 2)
+            ElseIf a.Super Then
+                bank = a.FB + 8
+            Else
+                bank = a.FB
+            End If
+            Return bank And &H3F
+        End Function
+
+        ''' <summary>
+        ''' The super-bank selector nibble for a bank word: 4 for the super-bank
+        ''' module (banks 030..043), otherwise whatever SBANK= last established.
+        ''' </summary>
+        Private Function SuperBankNibbleFor(a As AgcAddress) As Integer
+            Dim bank As Integer = BankFieldValue(a)
+            If bank >= &H18 AndAlso bank <= &H1F Then Return If(a.Super, 4, 3)
+            Return _sbank And 7
+        End Function
+
+        ''' <summary>BBCON / BBCON* -- a bank word: superbank in bits 4-6, F-bank in bits 10-15, E-bank in bits 0-2.</summary>
         Private Sub EmitBbcon(line As AgcLine, a As AgcAddress, star As Boolean)
             Dim target As AgcAddress = a
             Dim bankNumber As Integer
+            Dim starBankField As Integer = -1
 
             If star Then
-                ' BBCON* uses the last address of the last used fixed bank.
-                Dim b As Integer = &H23
-                Do While b > 0 AndAlso BankUsed(b) = 0
-                    b -= 1
+                ' BBCON* uses the last address of the last used fixed bank.  The
+                ' per-bank counters follow the ".binsource" numbering, so the owner
+                ' of the topmost non-empty slot gives the bank and the half.
+                Dim bin As Integer = &H23
+                Dim ownerBank As Integer = 0
+                Dim halfOffset As Integer = 0
+                Do While bin > 0
+                    If BankUsed(bin) > 0 Then
+                        BinSlotOwner(bin, ownerBank, halfOffset)
+                        Exit Do
+                    End If
+                    bin -= 1
                 Loop
                 target.Kind = AgcMemoryKind.Fixed
                 target.Banked = True
                 target.Invalid = False
-                target.Super = (b >= &H20)
-                target.FB = If(b >= &H20, b - 8, b)
-                target.SReg = &H1000 + BankUsed(b)
-                bankNumber = b
+                target.Super = (ownerBank >= 24)
+                target.FB = ownerBank
+                target.SReg = &H800 + halfOffset + BankUsed(bin)
+                bankNumber = ownerBank
+                starBankField = ownerBank
             Else
                 If Not target.IsFixed Then
                     Diagnostics.Fatal(line.File, line.LineNumber, "Destination is not in fixed memory.")
@@ -145,17 +179,16 @@ Namespace Agc
                     EmitAndAdvance(New Integer() {0})
                     Return
                 End If
-                bankNumber = If(target.Banked, target.FB, sreg \ &H800)
+                bankNumber = BankFieldValue(target)
             End If
 
-            Dim value As Integer = (bankNumber And &H1F) << 10
+            Dim value As Integer = (bankNumber And &H3F) << 10
             value = value Or (_ebank And 7)
 
-            Dim targetBank As Integer = If(target.Super, target.FB + 8, target.FB)
-            If (Not star) AndAlso targetBank >= &H18 AndAlso targetBank <= &H1F Then
-                value = value Or (If(target.Super, 4, 3) << 4)
-            ElseIf Not star Then
-                value = value Or ((_sbank And 7) << 4)
+            If star Then
+                value = value Or ((starBankField And 7) << 4)
+            Else
+                value = value Or ((SuperBankNibbleFor(target) And 7) << 4)
             End If
 
             EmitAndAdvance(New Integer() {value And AgcWord.Mask15})
@@ -172,19 +205,9 @@ Namespace Agc
             Dim w0 As Integer = a.SReg And AgcWord.Mask15
             Dim w1 As Integer = _ebank And 7
 
-            If a.SReg >= &H800 Then
-                If a.SReg <= &HFFF Then
-                    w1 = w1 Or ((a.FB And &H1F) << 10)
-                Else
-                    w1 = w1 Or (((a.SReg \ &H800) And &H1F) << 10)
-                End If
-            End If
-
-            Dim targetBank As Integer = If(a.Super, a.FB + 8, a.FB)
-            If targetBank >= &H18 AndAlso targetBank <= &H1F Then
-                w1 = w1 Or (If(a.Super, 4, 3) << 4)
-            Else
-                w1 = w1 Or ((_sbank And 7) << 4)
+            If a.IsFixed Then
+                w1 = w1 Or ((BankFieldValue(a) And &H3F) << 10)
+                w1 = w1 Or ((SuperBankNibbleFor(a) And 7) << 4)
             End If
 
             EmitAndAdvance(New Integer() {w0, w1})

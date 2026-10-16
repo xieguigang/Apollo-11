@@ -236,41 +236,38 @@ Namespace Agc
         ' ------------------------------------------------------------------
         Private Sub BuildBasic()
             ' -- The AGC instruction word is
-            '       bit 15  parity
-            '       bits 10-12  opcode         (the "instruction number")
-            '       bits 9   EXTEND flag (also the low bit of the quarter code)
-            '       bits 0-9   address
-            ' so an opcode field value is (number << 10).  These values come
-            ' straight from the Block II instruction list: TCF is instruction 002
-            ' and encodes as 020000 (octal), DAS is 004 and encodes as 040000, and
-            ' CA is 011 and encodes as 060000.  The trailing digit of each octal
-            ' value below is the instruction number times two.
-            ' Each value is the instruction field the CPU switches on, which the
-            ' reference engine computes as "(instruction >> 9) | 0100 when EXTEND
-            ' is set".  The table and the CPU's Select Case are therefore the two
-            ' halves of one contract, and the comment on each line is the dispatch
-            ' value the CPU expects.  The value written here is that dispatch
-            ' number shifted left nine places, e.g. CA is case 030 so it encodes as
-            ' 030 * 02000 octal = 06000, and "06000 >> 9 & 0177" is 030 again.
-            AddBasic("TC", &H0, OperandFlags.Number)                              ' 00
+            '       bit 15      parity
+            '       bits 12-14  opcode ("instruction number")
+            '       bits 9-11   part of the address field; bit 11 is also the low
+            '                   bit of the "quarter code" that the opcode implies
+            '       bits 0-11   address / operand
+            '
+            ' Every value below is the instruction word with its operand field
+            ' cleared, taken from the reference assembler (yaYUL's ParseGeneral
+            ' callers), and each matches "dispatch << 9" where dispatch is the
+            ' value the reference CPU engine computes as
+            '
+            '       (instruction >> 9) | 0100 (octal) when EXTEND is in effect.
+            '
+            ' OpcodeTable and the CPU's Select Case are two halves of one contract,
+            ' and the comment on each line is the dispatch value (an AGC octal
+            ' number) the CPU matches.  This table was previously built from a
+            ' mis-shifted set of constants -- TCF came out as 024000 rather than
+            ' 012000, DV as 0110 rather than 0100, BZF as 0114 rather than 0102 --
+            ' which is why assembled transfers landed on the wrong words.
+            AddBasic("TC", &H0, OperandFlags.Number)                              ' 000
             ' TCR transfers control with the return address in Q rather than Z.
             ' The AGC sources use it as an ordinary transfer (56 sites), and it
             ' assembles to the same basic opcode as TC; the distinction is which
             ' register holds the return address, which is decided by the software
             ' that set Q up beforehand.
-            AddBasic("TCR", &H0, OperandFlags.Number)                             ' 00
+            AddBasic("TCR", &H0, OperandFlags.Number)                             ' 000
             AddBasic("CCS", &H1000, OperandFlags.QC0 Or OperandFlags.Number)      ' 010
-            ' TCF dispatches to 020, which the CPU handles in its "Case &HA To &HF"
-            ' group -- that group is what performs the transfer, and the smoke
-            ' test's "TCF HALT" loop relies on it.  The reference binsource carries
-            ' 016526 at the TCF site, but its CAF at the same site also disagrees
-            ' with this table, so that file is a different ROM revision and is not
-            ' a word-for-word oracle for this source tree.
             AddBasic("TCF", &H2000, OperandFlags.None)                            ' 020
             AddBasic("DAS", &H2000, OperandFlags.QC0 Or OperandFlags.Plus1)       ' 020
-            AddBasic("LXCH", &H2400, OperandFlags.QC2 Or OperandFlags.Number)     ' 022
+            AddBasic("LXCH", &H2400, OperandFlags.QC1 Or OperandFlags.Number)     ' 022
             AddBasic("INCR", &H2800, OperandFlags.QC2)                            ' 024
-            AddBasic("ADS", &H2C00, OperandFlags.QC2)                             ' 026
+            AddBasic("ADS", &H2C00, OperandFlags.QC3)                             ' 026
             AddBasic("CA", &H3000, OperandFlags.Number)                           ' 030
             AddBasic("CAF", &H3000, OperandFlags.Fixed Or OperandFlags.Number)
             AddBasic("CAE", &H3000, OperandFlags.Erasable Or OperandFlags.Number)
@@ -294,15 +291,15 @@ Namespace Agc
             AddBasic("WOR", &H8A00, OperandFlags.Extended Or OperandFlags.Number)      ' 0105
             AddBasic("RXOR", &H8C00, OperandFlags.Extended Or OperandFlags.Number)     ' 0106
             AddBasic("EDRUPT", &H8E00, OperandFlags.Extended)                          ' 0107
-            AddBasic("DV", &H9000, OperandFlags.Extended Or OperandFlags.QCNot0)       ' 0110
-            AddBasic("BZF", &H9400, OperandFlags.Extended Or OperandFlags.QCNot0)      ' 0112
-            AddBasic("MSU", &HA000, OperandFlags.Extended Or OperandFlags.QCNot0)      ' 0120
-            AddBasic("QXCH", &HA400, OperandFlags.Extended Or OperandFlags.QC2 Or OperandFlags.Number)  ' 0122
-            AddBasic("AUG", &HA800, OperandFlags.Extended Or OperandFlags.QC2)         ' 0124
-            AddBasic("DIM", &HAC00, OperandFlags.Extended Or OperandFlags.QC2)         ' 0126
-            AddBasic("DCA", &HB000, OperandFlags.Extended Or OperandFlags.Plus1 Or OperandFlags.Number) ' 0130
+            AddBasic("DV", &H8000, OperandFlags.Extended Or OperandFlags.QCNot0)       ' 0100
+            AddBasic("BZF", &H8400, OperandFlags.Extended Or OperandFlags.QCNot0)      ' 0102
+            AddBasic("MSU", &H8800, OperandFlags.Extended Or OperandFlags.QCNot0)      ' 0104
+            AddBasic("QXCH", &H8A00, OperandFlags.Extended Or OperandFlags.QC1 Or OperandFlags.Number) ' 0105
+            AddBasic("AUG", &H8C00, OperandFlags.Extended Or OperandFlags.QC2)         ' 0106
+            AddBasic("DIM", &H8E00, OperandFlags.Extended Or OperandFlags.QC3)         ' 0107
+            AddBasic("DCA", &HAA00, OperandFlags.Extended Or OperandFlags.Plus1 Or OperandFlags.Number) ' 0125
             AddBasic("DCS", &HC000, OperandFlags.Extended Or OperandFlags.Plus1 Or OperandFlags.Number) ' 0140
-            AddBasic("SU", &HE000, OperandFlags.Extended Or OperandFlags.QCNot0)       ' 0160
+            AddBasic("SU", &HE000, OperandFlags.Extended Or OperandFlags.QC0 Or OperandFlags.Number)    ' 0160
             AddBasic("BZMF", &HE400, OperandFlags.Extended Or OperandFlags.QCNot0)     ' 0162
             AddBasic("MP", &HF000, OperandFlags.Extended)                              ' 0170
 

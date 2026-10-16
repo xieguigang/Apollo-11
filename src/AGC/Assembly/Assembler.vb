@@ -45,66 +45,228 @@ Namespace Agc
 
         ''' <summary>
         ''' Resolve an assembler address to the rope-image bank and the AGC bank
-        ''' number used for word accounting.  The rope image uses the AGC's own
-        ''' bank numbering, which is what AgcMemory also decodes to.
+        ''' number used for word accounting.  The rope image indexes fixed memory
+        ''' the way the hardware does, so the AGC bank number is used directly
+        ''' except for the super-bank module (see RopeBankOf).
         ''' </summary>
         Public Shared Sub ResolveBank(address As AgcAddress, ByRef physical As Integer, ByRef logical As Integer)
-            physical = -1
-            logical = -1
-            If Not address.IsFixed OrElse address.Invalid Then Return
-
-            Dim sreg As Integer = address.SReg And AgcWord.Mask15
-            Dim moduleNumber As Integer
-            Dim half As Integer
-
-            If address.Unbanked Then
-                If sreg < 2048 Then Return                       ' not a fixed address
-                If sreg < 4096 Then
-                    ' 04000..07777: banks 02 and 03 of module 2.
-                    moduleNumber = 2
-                    half = (sreg - 2048) \ 1024
-                    logical = 2 + half
-                Else
-                    ' 010000..017777 is module 2, 030000.. is the super-bank module.
-                    Dim rel As Integer = sreg - 4096
-                    moduleNumber = 2 + rel \ 2048
-                    half = (rel Mod 2048) \ 1024
-                    logical = If(moduleNumber = 2, 2 + half, address.FB)
-                End If
-            Else
-                ' Banked: the module comes from the FB field (030..043 are the
-                ' super-bank module) and the half from the 01000 bit of SReg.
-                moduleNumber = If(address.Super, address.FB - 8, address.FB)
-                half = (sreg - 2048) \ 1024
-                logical = address.FB
+            Dim agcBank As Integer = -1
+            Dim offset As Integer = -1
+            ResolveFixed(address, agcBank, offset)
+            If agcBank < 0 Then
+                physical = -1
+                logical = -1
+                Return
             End If
-
-            physical = logical
+            logical = agcBank
+            physical = RopeBankOf(agcBank)
         End Sub
 
         ''' <summary>
-        ''' Map an AGC bank number into the index used for the per-bank word
-        ''' counters.  Banks 00 and 01 are the two halves of the unswitched
-        ''' "fixed-fixed" area and share physical storage with banks 02 and 03:
-        ''' "BANK 0" writes 000000..003777 and "BANK 2" writes 010000..013777,
-        ''' but both end up in bank 02 of the rope image.
+        ''' Check the address model's round trips.  The rope image is addressed by
+        ''' AGC bank and 2K offset, and three different routes lead to it:
+        '''
+        '''     AgcCodec.PseudoToAddress(pseudo)        (an assembler address)
+        '''     AgcAddress.PseudoValue                  (back to the flat form)
+        '''     ResolveFixed(address) -> (bank, offset) (the rope image)
+        '''
+        ''' They must agree.  Returns a list of complaints; an empty list means the
+        ''' model is self-consistent over the whole fixed pseudo space.
         ''' </summary>
-        Public Shared Function PhysicalBank(bank As Integer) As Integer
-            If bank = 0 OrElse bank = 2 Then Return 2
-            If bank = 1 OrElse bank = 3 Then Return 3
-            Return bank
+        Public Function AuditAddressModel() As List(Of String)
+            Dim problems As New List(Of String)()
+
+            ' One representative word from every 2K bank of the fixed space.  The
+            ' fixed-fixed pair's lower half (00000..03777) is addressed as banks 00
+            ' and 01 and also lands in bank 02, so the round trip through PseudoValue
+            ' canonicalises it to the 04000 form; those probes are checked against
+            ' the canonical address instead.
+            Dim probes As New List(Of Integer)()
+            For b As Integer = 2 To 35
+                If b = 2 OrElse b = 3 Then
+                    ' The fixed-fixed pair: probe both of its 1K halves, which the
+                    ' sources address as 04000 and 06000 (and as 00000/02000).
+                    probes.Add(&H4000 + ((b - 2) * 1024))
+                    probes.Add(&H4000 + ((b - 2) * 1024) + 1023)
+                Else
+                    probes.Add(BankPseudoBase(b))
+                    probes.Add(BankPseudoBase(b) + 1024)
+                    probes.Add(BankPseudoBase(b) + 2047)
+                End If
+            Next
+            probes.Add(&H5000)
+            probes.Add(&H7777)
+
+            For Each pseudo As Integer In probes
+                If pseudo < 0 OrElse pseudo > AgcWord.Mask15 Then Continue For
+                Dim a As AgcAddress = AgcCodec.PseudoToAddress(pseudo)
+                If Not a.IsFixed Then
+                    problems.Add("pseudo " & AgcWord.ToOctal(pseudo) & " did not resolve to fixed memory")
+                    Continue For
+                End If
+                Dim back As Integer = a.PseudoValue
+                If back <> pseudo Then
+                    problems.Add("pseudo " & AgcWord.ToOctal(pseudo) & " -> " & a.ToString() &
+                                 " -> pseudo " & AgcWord.ToOctal(back))
+                    Continue For
+                End If
+                Dim bank As Integer = -1
+                Dim offset As Integer = -1
+                ResolveFixed(a, bank, offset)
+                Dim expectBank As Integer = -1
+                Dim expectOffset As Integer = -1
+                DecodePseudoBankOffset(pseudo, expectBank, expectOffset)
+                If bank <> expectBank OrElse offset <> expectOffset Then
+                    problems.Add("pseudo " & AgcWord.ToOctal(pseudo) & " (" & a.ToString() &
+                                 ") resolved to bank " & bank.ToString() & " offset " & offset.ToString() &
+                                 ", expected bank " & expectBank.ToString() & " offset " & expectOffset.ToString())
+                End If
+            Next
+            Return problems
         End Function
 
         ''' <summary>
-        ''' The AGC bank number a location belongs to.  Banks 00/01 and 02/03
-        ''' share physical rope banks but are allocated independently: within
-        ''' physical bank 2 the low 1024 words are "BANK 0" (written
-        ''' 000000..003777) and the high 1024 are "BANK 2" (written
-        ''' 010000..013777); physical bank 3 splits into "BANK 1" and "BANK 3"
-        ''' the same way.
+        ''' The hardware bank and 2K offset a fixed pseudo address stands for.  This
+        ''' is the definition the assembler and the rope image both must agree with:
+        '''
+        '''     00000..03777  the fixed-fixed pair's lower half, which the sources
+        '''                   address as banks 00 and 01      -> bank 02
+        '''     04000..07777  the pair's upper half (banks 02, 03) -> bank 02
+        '''     010000..027777  ordinary banks                   -> 04..017
+        '''     030000..077777  the super-bank module            -> 024..035
         ''' </summary>
-        Public Shared Function LogicalBank(physicalBank As Integer, offset As Integer) As Integer
-            Return physicalBank
+        Public Shared Sub DecodePseudoBankOffset(pseudo As Integer, ByRef bank As Integer, ByRef offset As Integer)
+            bank = -1
+            offset = -1
+            If pseudo < 0 OrElse pseudo > AgcWord.Mask15 Then Return
+            If pseudo < 4096 Then
+                ' The fixed-fixed pair's lower half, addressed as banks 00 and 01.
+                bank = 2
+                offset = pseudo
+            ElseIf pseudo <= 8191 Then
+                ' 04000..07777: the same pair, as banks 02 and 03.
+                bank = 2
+                offset = pseudo - 4096
+            ElseIf pseudo <= 12287 Then
+                ' 010000..027777: ordinary banks 04..017, each one 02000 block.
+                bank = 4 + (pseudo - 4096) \ 2048
+                offset = pseudo - (4096 + 2048 * (bank - 4))
+            Else
+                ' 030000..077777: the super-bank module, hardware banks 024..035.
+                bank = 24 + (pseudo - 12288) \ 2048
+                offset = pseudo - (12288 + 2048 * (bank - 24))
+            End If
+        End Sub
+
+        ''' <summary>
+        ''' The flat (pseudo) address of word 0 of a hardware bank, in the 2K offset
+        ''' space the bank allocator works in.  A bank is 2K, so the block for bank n
+        ''' is 02000 wide:
+        '''
+        '''     bank 02          006000   (the fixed-fixed pair; its low 1K, which the
+        '''                               sources also address as banks 00 and 01, is
+        '''                               what "006000 + offset" produces for offsets
+        '''                               0..01777)
+        '''     banks 04..023    010000 + 02000*(bank-04)
+        '''     banks 024..035   030000 + 02000*(bank-024)
+        ''' </summary>
+        Public Shared Function BankPseudoBase(bank As Integer) As Integer
+            If bank <= 3 Then Return 4096
+            If bank >= 24 Then Return 12288 + 2048 * (bank - 24)
+            Return 4096 + 2048 * (bank - 4)
+        End Function
+
+        ''' <summary>
+        ''' The ".binsource" 1K block a fixed location belongs to.  The published
+        ''' listings split the fixed-fixed pair into blocks 0..3 (its low 1K is
+        ''' blocks 0 and 2, its high 1K blocks 1 and 3) and give the super-bank module
+        ''' blocks 8..15; every other hardware bank is one 2K block.
+        ''' </summary>
+        Public Shared Function BinBankOf(hardwareBank As Integer, offset As Integer) As Integer
+            Dim off As Integer = offset And 2047
+            If hardwareBank = 2 Then Return If(off < 1024, 0, 1)
+            If hardwareBank = 3 Then Return If(off < 1024, 0, 1)
+            If hardwareBank >= 24 Then Return 8 + (hardwareBank - 24) * 2 + If(off < 1024, 0, 1)
+            Return hardwareBank
+        End Function
+
+        ''' <summary>
+        ''' The word-counter slot for a fixed location.  Counters are per 1K block,
+        ''' and the fixed-fixed pair's low 1K is shared by listing blocks 0 and 2 (its
+        ''' high 1K by 1 and 3), so each such pair shares one counter.
+        ''' </summary>
+        Public Shared Function BinSlotOf(hardwareBank As Integer, offset As Integer) As Integer
+            If hardwareBank = 2 OrElse hardwareBank = 3 Then Return If((offset And 2047) < 1024, 0, 1)
+            Return BinBankOf(hardwareBank, offset)
+        End Function
+
+        ''' <summary>
+        ''' The owner of a counter slot, as the 2K offset of its first word inside the
+        ''' hardware bank the slot belongs to.  This is the inverse of
+        ''' <see cref="BinSlotOf"/> for the banks that share a pair.
+        ''' </summary>
+        Public Shared Sub BinSlotOwner(slot As Integer, ByRef hardwareBank As Integer, ByRef offset As Integer)
+            If slot = 0 Then
+                hardwareBank = 2
+                offset = 0
+                Return
+            End If
+            If slot = 1 Then
+                hardwareBank = 2
+                offset = 1024
+                Return
+            End If
+            If slot >= 8 AndAlso slot <= 15 Then
+                hardwareBank = 24 + (slot - 8) \ 2
+                offset = ((slot - 8) Mod 2) * 1024
+                Return
+            End If
+            hardwareBank = slot
+            offset = 0
+        End Sub
+
+        ''' <summary>
+        ''' The rope-image bank that holds a hardware bank.  The rope image indexes
+        ''' fixed memory exactly the way the hardware indexes banks, so this is the
+        ''' identity and a bank register value can be used as an array index.
+        ''' </summary>
+        Public Shared Function RopeBankOf(hardwareBank As Integer) As Integer
+            Return hardwareBank
+        End Function
+
+        ''' <summary>
+        ''' Resolve an assembler fixed address to the source bank it lives in and the
+        ''' offset of the word inside that 2K bank.  SReg is "02000 + offset" with bit
+        ''' 01000 marking the half of the bank, which is the same bit the hardware
+        ''' reads out of an operand field.
+        ''' </summary>
+        Public Shared Sub ResolveFixed(address As AgcAddress, ByRef sourceBank As Integer, ByRef offset As Integer)
+            sourceBank = -1
+            offset = -1
+            If Not address.IsFixed OrElse address.Invalid Then Return
+            Dim sreg As Integer = address.SReg And AgcWord.Mask15
+            If sreg < 2048 Then
+                ' The low 1K of the fixed-fixed pair, addressed as 00000..03777 by
+                ' the sources' banks 00 and 01.  Its hardware bank is 2.
+                sourceBank = 2
+                offset = sreg And 1023
+                Return
+            End If
+            sourceBank = address.FB
+            offset = (sreg - 2048) And &H7FF
+        End Sub
+
+        ''' <summary>
+        ''' The ".binsource" 1K bank a fixed address belongs to.  The published
+        ''' listings number the fixed-fixed pair as banks 0..3 and the super-bank
+        ''' module as banks 8..15, and each remaining AGC bank as itself.
+        ''' </summary>
+        Public Shared Function BinBankFor(address As AgcAddress) As Integer
+            Dim bank As Integer = -1
+            Dim offset As Integer = -1
+            ResolveFixed(address, bank, offset)
+            If bank < 0 Then Return -1
+            Return AgcAssembler.BinBankOf(bank, offset)
         End Function
 
         ''' <summary>
@@ -441,12 +603,13 @@ Namespace Agc
                     Image.Erasable(bank, off) = word
                 End If
             ElseIf address.IsFixed Then
-                Dim sreg As Integer = address.SReg And AgcWord.Mask15
-                Dim physical As Integer = -1
-                Dim logical As Integer = -1
-                ResolveBank(address, physical, logical)
-                If physical >= 0 AndAlso physical < AgcRopeImage.FixedBankCount Then
-                    Image.SetFixed(physical, 2048 + (sreg Mod 1024), word)
+                Dim sourceBank As Integer = -1
+                Dim offset As Integer = -1
+                ResolveFixed(address, sourceBank, offset)
+                If sourceBank >= 0 Then
+                    ' The super-bank module (hardware banks 024..035) is indexed the
+                    ' same way as every other bank; see RopeBankOf.
+                    Image.SetFixed(RopeBankOf(sourceBank), offset, word)
                 End If
             End If
         End Sub
@@ -545,19 +708,19 @@ Namespace Agc
 
         Private Sub CreditWords(address As AgcAddress, count As Integer)
             If Not address.IsFixed OrElse address.Invalid Then Return
-            Dim sreg As Integer = address.SReg And AgcWord.Mask15
-            Dim physical As Integer = -1
-            Dim logical As Integer = -1
-            ResolveBank(address, physical, logical)
-            If physical < 0 OrElse logical < 0 Then Return
-            If physical >= AgcRopeImage.FixedBankCount Then Return
-            Dim used As Integer = (sreg Mod 1024) + count
+            Dim sourceBank As Integer = -1
+            Dim offset As Integer = -1
+            ResolveFixed(address, sourceBank, offset)
+            If sourceBank < 0 Then Return
+            Dim slot As Integer = BinSlotOf(sourceBank, offset)
+            If slot < 0 OrElse slot >= _usedInBank.Length Then Return
+            Dim used As Integer = (offset And 1023) + count
             If used < 0 Then used = 0
-            If used > AgcRopeImage.FixedBankWords Then used = AgcRopeImage.FixedBankWords
-            If used > _usedInBank(logical) Then _usedInBank(logical) = used
+            If used > 1024 Then used = 1024
+            If used > _usedInBank(slot) Then _usedInBank(slot) = used
         End Sub
 
-        ''' <summary>Number of words already assembled into an AGC bank.</summary>
+        ''' <summary>Number of words already assembled into a ".binsource" 1K bank.</summary>
         Public Function BankUsage(logicalBank As Integer) As Integer
             If logicalBank < 0 OrElse logicalBank >= AgcRopeImage.FixedBankCount Then Return 0
             Return _usedInBank(logicalBank)

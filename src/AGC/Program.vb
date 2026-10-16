@@ -176,6 +176,18 @@ Namespace Agc
             Dim verbose As Boolean = HasFlag(rest, "--verbose")
             Dim asm As AgcAssembler = CreateAssembler(sourceDir, verbose)
             If HasFlag(rest, "--resolve-trace") Then asm._debugEncoding = True
+            If HasFlag(rest, "--audit") Then
+                Console.WriteLine("Address model audit:")
+                Dim problems As List(Of String) = asm.AuditAddressModel()
+                If problems.Count = 0 Then
+                    Console.WriteLine("  OK: every probe round trips and resolves consistently.")
+                Else
+                    For Each p As String In problems
+                        Console.WriteLine("  " & p)
+                    Next
+                    Console.WriteLine("  " & problems.Count.ToString() & " problem(s).")
+                End If
+            End If
             ' By default repeated identical messages are capped so that the output
             ' stays readable.  This raises the cap so a survey can see every
             ' distinct site.

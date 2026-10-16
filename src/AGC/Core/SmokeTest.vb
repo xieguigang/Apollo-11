@@ -497,13 +497,13 @@ Namespace Agc
             extExpected("WOR") = &O105
             extExpected("RXOR") = &O106
             extExpected("EDRUPT") = &O107
-            extExpected("DV") = &O110
-            extExpected("BZF") = &O112
-            extExpected("MSU") = &O120
-            extExpected("QXCH") = &O122
-            extExpected("AUG") = &O124
-            extExpected("DIM") = &O126
-            extExpected("DCA") = &O130
+            extExpected("DV") = &O100
+            extExpected("BZF") = &O102
+            extExpected("MSU") = &O104
+            extExpected("QXCH") = &O105
+            extExpected("AUG") = &O106
+            extExpected("DIM") = &O107
+            extExpected("DCA") = &O125
             extExpected("DCS") = &O140
             extExpected("SU") = &O160
             extExpected("BZMF") = &O162
@@ -847,9 +847,10 @@ Namespace Agc
                 Dim bPseudo As Integer = asm.Lookup("B")
                 Dim aAddr As AgcAddress = AgcCodec.PseudoToAddress(aPseudo)
                 Dim bAddr As AgcAddress = AgcCodec.PseudoToAddress(bPseudo)
-                Dim dloadOpcode As Integer = asm.Image.GetFixed(2, 2048)
-                Dim dloadOperand As Integer = asm.Image.GetFixed(2, 2049)
-                Dim dadOperand As Integer = asm.Image.GetFixed(2, 2051)
+                Dim oneAddr As AgcAddress = AgcCodec.PseudoToAddress(asm.Lookup("ONE"))
+                Dim dloadOpcode As Integer = RopeWordAt(asm, oneAddr, 0)
+                Dim dloadOperand As Integer = RopeWordAt(asm, oneAddr, 1)
+                Dim dadOperand As Integer = RopeWordAt(asm, oneAddr, 3)
                 Console.WriteLine("  A addr=" & aAddr.ToString() &
                                   " B addr=" & bAddr.ToString() &
                                   " DLOAD opcode=" & AgcWord.ToOctal(dloadOpcode) &
@@ -870,6 +871,19 @@ Namespace Agc
         End Sub
 
         ' ------------------------------------------------------------------
+
+        ''' <summary>
+        ''' Read the word <paramref name="index"/> words past an assembler address
+        ''' out of the assembled rope image, following the same bank/offset decode
+        ''' the assembler used to place it.
+        ''' </summary>
+        Private Function RopeWordAt(asm As AgcAssembler, address As AgcAddress, index As Integer) As Integer
+            Dim bank As Integer = -1
+            Dim offset As Integer = -1
+            AgcAssembler.ResolveFixed(address, bank, offset)
+            If bank < 0 Then Return -1
+            Return asm.Image.GetFixed(AgcAssembler.RopeBankOf(bank), (offset + index) And 2047)
+        End Function
 
         Private Function CpuRead(machine As AgcMachine, symbol As String, asm As AgcAssembler) As Integer
             Dim pseudo As Integer = asm.Lookup(symbol)

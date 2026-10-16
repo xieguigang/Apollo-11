@@ -94,6 +94,31 @@ Namespace Agc
         ''' <summary>Callback used to read/write the timer registers.</summary>
         Public Property TimerAccess As ITimerAccess
 
+        ''' <summary>
+        ''' Channel 7's output latches: bit 6 is the AGC's super-bank bit.  The
+        ''' flight software selects a super bank by writing the bank bits into
+        ''' channel 7 (SUPERSW / the "WRITE SUPERBNK" sites), and the address
+        ''' decoder observes this bit.
+        ''' </summary>
+        Private _channel7 As Integer
+
+        ''' <summary>Bit of channel 7 that enables the super-bank flip-flop (0100).</summary>
+        Public Const Chan7SuperBankBit As Integer = &H40
+
+        ''' <summary>True when the super-bank bit of channel 7 is set.</summary>
+        Public ReadOnly Property SuperBankEnabled As Boolean
+            Get
+                Return (_channel7 And Chan7SuperBankBit) <> 0
+            End Get
+        End Property
+
+        ''' <summary>The latched channel 7 output word (for diagnostics).</summary>
+        Public ReadOnly Property Channel7 As Integer
+            Get
+                Return _channel7
+            End Get
+        End Property
+
         Public Sub New()
             Dsky = New AgcDsky()
             Cdu = New AgcCdu()
@@ -106,6 +131,7 @@ Namespace Agc
             Array.Clear(RelayRows, 0, RelayRows.Length)
             _scalerCounter = 0
             ScalerTicks = 0
+            _channel7 = 0
             Standby = False
             PendingRestart.Clear()
             TelemetryWords = 0
@@ -160,6 +186,10 @@ Namespace Agc
                 Case ChanAltOut
                     Downlink.SendTelemetry(value)
                     TelemetryWords += 1
+                Case 7
+                    ' Channel 7 is the super-bank selection (bits 5-7 of the value,
+                    ' i.e. 0100 in the shifted form the software writes).
+                    _channel7 = value And &HFF
                 Case &HA
                     ' Channel 010 has a second set of relay rows accessed by an
                     ' EXTEND WRITE; the hardware latches on the high bits.
@@ -286,13 +316,13 @@ Namespace Agc
             End Select
         End Sub
 
-        ''' <summary>Called once per instruction to mirror bank registers into channels.</summary>
+        ''' <summary>
+        ''' Called once per instruction.  Channel 7 carries the super-bank
+        ''' selection, which the software writes with WRITE; reading the channel
+        ''' back returns the same bits so that "ROR SUPERBNK" saves them.
+        ''' </summary>
         Public Sub UpdateBankIO(regEBank As Integer, regFBank As Integer, regBBank As Integer, eBank As Integer)
-            ' Channel 7 carries the super-bank selection and various flags.
-            Dim ch7 As Integer = InputChannel(7)
-            ch7 = ch7 And &H6000
-            ch7 = ch7 Or ((regFBank >> 10) And &H37)
-            InputChannel(7) = ch7 And AgcWord.Mask15
+            InputChannel(7) = (InputChannel(7) And &H7F00) Or (_channel7 And &HFF)
         End Sub
 
     End Class

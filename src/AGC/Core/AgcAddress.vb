@@ -54,6 +54,16 @@ Namespace Agc
         ''' <summary>True for a super-bank address (module 1 banks 030..043).</summary>
         Public Super As Boolean
 
+        ''' <summary>
+        ''' Which 1K section of the fixed-fixed pair (AGC bank 02) an address is in.
+        ''' The sources split that one 2K bank into four 1K sections -- banks 00 and
+        ''' 01 below 04000 and banks 02 and 03 above it -- and sections 0 and 2 share
+        ''' the sub-address 0000..0377 while 1 and 3 share 0400..0777, so the section
+        ''' cannot be recovered from SReg alone.  Meaningful only for a fixed-fixed
+        ''' address (FB = 2), where it is the ".binsource" bank number (0..3).
+        ''' </summary>
+        Public BinBank As Integer
+
         ''' <summary>Set when the value is a plain constant rather than memory.</summary>
         Public IsConstant As Boolean
 
@@ -96,28 +106,51 @@ Namespace Agc
         End Function
 
         ''' <summary>
+        ''' Create a fixed address from a 15-bit sub-address register value.  For a
+        ''' fixed address SReg is "02000 + offset", where bit 01000 selects the half
+        ''' of the 2K AGC bank.
+        ''' </summary>
+        Public Shared Function FixedAddress(sreg As Integer) As AgcAddress
+            Dim a As New AgcAddress()
+            a.Kind = AgcMemoryKind.Fixed
+            a.Unbanked = True
+            a.SReg = sreg And AgcWord.Mask15
+            Return a
+        End Function
+
+        ''' <summary>
         ''' The flat "pseudo address" used when a symbol value is stored in a data
-        ''' word or written out in a listing.
+        ''' word or written out in a listing (yaYUL's "Value" field, and its
+        ''' inverse is AgcCodec.PseudoToAddress).
         ''' </summary>
         Public ReadOnly Property PseudoValue As Integer
             Get
-                If Unbanked Then Return SReg
-                If IsErasable Then
-                    ' Banked erasable keeps the hardware's 10-bit form, with the
-                    ' E-bank in bits 8-9, so the flat word is just SReg.
-                    Return SReg
-                End If
+                ' Fixed memory first: a fixed address may also carry the Unbanked
+                ' flag (the fixed-fixed pair, whose flat form is below 04000), and
+                ' the flat form of a fixed address is not simply SReg.
                 If IsFixed Then
-                    ' Fixed banks 02..037 live at 010000 + bank*02000 in pseudo
-                    ' address terms.  The super-bank module (the AGC banks 030..043)
-                    ' is placed 02000 lower, at 020000..027777, so that it does not
-                    ' collide with the low banks.
-                    '
-                    ' Note the test is on Super, not on "FB >= 24": for a banked
-                    ' address FB holds the AGC bank number (030..043), not the
-                    ' ordinal 24..35, so comparing it against 24 is never true.
-                    Dim v As Integer = 4096 + (SReg - 2048) + (1024 * FB)
-                    If Super Then v -= 2048
+                    ' One AGC fixed bank is 2K words, so each bank is 02000 of the
+                    ' flat space and SReg is "02000 + offset" with FB naming the
+                    ' bank.  The fixed-fixed pair is bank 02 and is addressed as
+                    ' "02000 + offset" for the sources' banks 02 and 03, and as
+                    ' "offset" (00000..01777) for their banks 00 and 01 -- BinBank
+                    ' distinguishes the two forms.  Everything else is
+                    ' "010000 + 02000*(FB-04)", and the super-bank module is placed
+                    ' 02000 lower because the hardware adds 010 to its F-bank field.
+                    If FB = 2 Then
+                        If BinBank >= 2 Then
+                            Return 2048 + (SReg And 2047)
+                        End If
+                        Return 1024 * (BinBank And 1) + (SReg And 1023)
+                    End If
+                    Dim v As Integer = 4096 + (SReg - 2048) + 2048 * (FB - 4)
+                    If Super Then
+                        ' The super-bank module's flat base is 030000, which is
+                        ' 02000 below what "010000 + 02000*(FB-04)" produces for its
+                        ' hardware bank number, so the term above cancels the
+                        ' offset.  Express the flat form directly instead.
+                        v = 12288 + 2048 * (FB - 24) + (SReg - 2048)
+                    End If
                     Return v
                 End If
                 Return SReg
@@ -130,11 +163,10 @@ Namespace Agc
         ''' </summary>
         Public ReadOnly Property CadrValue As Integer
             Get
-                ' For a super-bank address the PseudoValue is encoded 02000 below
-                ' the flat form (the super module sits at 020000..027777), so the
-                ' offset has to be added back before the 12-bit bank offset can be
-                ' taken.  Without this the CADR value is 02000 short for every
-                ' symbol in banks 030..043.
+                ' One AGC bank is 2K, so the 12-bit word address of an offset inside
+                ' a bank is just "010000 + offset" with the base removed.  The
+                ' super-bank module sits at 030000, so its addresses are already in
+                ' that form once the 02000 the flat form subtracted is added back.
                 Dim p As Integer = PseudoValue
                 If Super Then p += 2048
                 Return p And &HFFF

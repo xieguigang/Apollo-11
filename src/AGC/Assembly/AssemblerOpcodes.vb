@@ -41,7 +41,8 @@ Namespace Agc
                     EmitAndAdvance(New Integer() {v})
                     Return
                 Case "EDRUPT"
-                    EmitAndAdvance(New Integer() {&H3800})
+                    ' Dispatch value 0107, so the word is 0107 << 9 = 0107000 octal.
+                    EmitAndAdvance(New Integer() {&H8E00})
                     Return
                 Case "INDEX", "NDX"
                     EncodeIndex(line)

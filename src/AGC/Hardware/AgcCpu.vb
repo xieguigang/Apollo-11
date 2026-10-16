@@ -429,6 +429,11 @@ Namespace Agc
             End If
 
             Dim extraCode As Boolean = ExtraCode
+            ' The opcode occupies bits 12-14 of the instruction word, so the
+            ' "extended opcode" the reference engine switches on is the word
+            ' shifted right by 9 (which keeps the three quarter-code bits below the
+            ' opcode) with bit 6 set when the preceding instruction was EXTEND.
+            ' Dispatch value = (instruction >> 12) for the basic set.
             Dim extendedOpcode As Integer = (instruction >> 9) And &H3F
             If extraCode Then extendedOpcode = extendedOpcode Or &H40
 
@@ -1044,20 +1049,25 @@ Namespace Agc
 
             If Not SubstituteInstruction Then Z = Z And AgcWord.Mask12
 
-            ' Refresh the bank registers used for fixed memory decoding.  The
-            ' CPU mirrors FBANK (address 4) and BBANK (address 6) into the
-            ' hardware bank registers.
+            ' Refresh the fixed-memory bank registers.  The CPU mirrors FBANK
+            ' (erasable address 4) and BBANK (address 6) into the hardware bank
+            ' registers: the bank number is the F-bank field, bits 10-14 of the
+            ' register word.  A fixed-switchable address then selects one of these
+            ' and uses bit 01000 of its own 12-bit address to pick the half of the
+            ' 2K bank, which is what yaAGC's FindMemoryWord does.
             Dim regFBANK As Integer = GetErasable(RegFBANK) And AgcWord.Mask15
             Dim regBBANK As Integer = GetErasable(RegBBANK) And AgcWord.Mask15
             Dim regEBANK As Integer = Memory.ReadErasable(3) And AgcWord.Mask15
             Memory.EBank = (regEBANK >> 8) And 7
-            Memory.Fbank(0) = (regFBANK >> 10) And &H37
-            Memory.Fbank(1) = (regBBANK >> 10) And &H37
+            Memory.Fbank(0) = (regFBANK >> 10) And &H3F
+            Memory.Fbank(4) = (regBBANK >> 10) And &H3F
+            Memory.SuperBankForeground = Io.SuperBankEnabled
             If BankTrace Then
                 Console.WriteLine("    BANKREFRESH fbankReg=" & AgcWord.ToOctal(regFBANK) &
-                                  " (" & regFBANK.ToString() & ") -> Fbank0=" & Memory.Fbank(0).ToString() &
+                                  " -> FBANK=" & Memory.Fbank(0).ToString() &
                                   " ; bbankReg=" & AgcWord.ToOctal(regBBANK) &
-                                  " (" & regBBANK.ToString() & ") -> Fbank1=" & Memory.Fbank(1).ToString())
+                                  " -> BBANK=" & Memory.Fbank(4).ToString() &
+                                  " ; super=" & Memory.SuperBankForeground.ToString())
             End If
 
             L = SignExtend(OverflowCorrected(L)) And AgcWord.Mask15
