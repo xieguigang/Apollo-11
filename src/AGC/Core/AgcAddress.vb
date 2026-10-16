@@ -145,11 +145,11 @@ Namespace Agc
                     End If
                     Dim v As Integer = 4096 + (SReg - 2048) + 2048 * (FB - 4)
                     If Super Then
-                        ' The super-bank module's flat base is 030000, which is
-                        ' 02000 below what "010000 + 02000*(FB-04)" produces for its
-                        ' hardware bank number, so the term above cancels the
-                        ' offset.  Express the flat form directly instead.
-                        v = 12288 + 2048 * (FB - 24) + (SReg - 2048)
+                        ' FB is the hardware bank number, but the sources' super-bank
+                        ' numbering is offset by eight, so the flat block is derived
+                        ' from the source number.
+                        Dim src As Integer = FB + 8
+                        v = 12288 + 2048 * (src - 32) + (SReg - 2048)
                     End If
                     Return v
                 End If

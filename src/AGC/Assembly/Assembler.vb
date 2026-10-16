@@ -167,10 +167,32 @@ Namespace Agc
         '''     banks 04..023    010000 + 02000*(bank-04)
         '''     banks 024..035   030000 + 02000*(bank-24)
         ''' </summary>
+        ''' <summary>
+        ''' The flat (pseudo) address of word 0 of a bank named in the sources.  A
+        ''' bank is 2K, so each occupies one 02000 block:
+        '''
+        '''     banks 00..03   004000   (the fixed-fixed pair)
+        '''     banks 04..023  010000 + 02000*(bank-04)
+        '''     banks 030..043 030000 + 02000*(bank-030)
+        '''
+        ''' The super-bank module's arithmetic is in the sources' own numbering, so
+        ''' its block is "030000 + 02000*(bank - 030)" rather than a term in the
+        ''' hardware bank number.
+        ''' </summary>
         Public Shared Function BankPseudoBase(bank As Integer) As Integer
             If bank <= 3 Then Return 4096
-            If bank >= 24 Then Return 12288 + 2048 * (bank - 24)
+            If bank >= 32 Then Return 12288 + 2048 * (bank - 32)
             Return 4096 + 2048 * (bank - 4)
+        End Function
+
+        ''' <summary>
+        ''' The hardware bank number (00..037) a bank named in the sources stands for.
+        ''' The sources number the super-bank module 030..043 while the hardware names
+        ''' it 024..035, so eight comes off.
+        ''' </summary>
+        Public Shared Function HardwareBankOf(sourceBank As Integer) As Integer
+            If sourceBank >= 32 Then Return sourceBank - 8
+            Return sourceBank
         End Function
 
         ''' <summary>
@@ -529,6 +551,14 @@ Namespace Agc
             Dim name As String = line.Label
             If AgcSourceReader.IsRelativeLabel(name) Then Return
             If Not IsValidSymbolName(name) Then Return
+            If _debugEncoding AndAlso (name = "EXTVERBS" OrElse name = "SELFCHEC") Then
+                Console.WriteLine("  DEFINE " & name & " = " & address.ToString() &
+                                  " invalid=" & address.Invalid.ToString() &
+                                  " kind=" & address.Kind.ToString() &
+                                  " fb=" & address.FB.ToString() &
+                                  " sreg=" & AgcWord.ToOctal(address.SReg) &
+                                  " [" & System.IO.Path.GetFileName(line.File) & ":" & line.LineNumber.ToString() & "]")
+            End If
             Symbols.Define(name, address, isEquate, line.File, line.LineNumber)
         End Sub
 

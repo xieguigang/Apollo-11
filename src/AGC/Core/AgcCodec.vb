@@ -81,12 +81,18 @@ Namespace Agc
                 a.FB = 4 + (value - 4096) \ 2048
                 a.SReg = 2048 + (value And 2047)
             Else
-                ' 030000..077777: the super-bank module, hardware banks 024..035
-                ' (which the sources call 030..043).  Each gets one 02000 block.
+                ' 030000..043777: the super-bank module.  The sources number these
+                ' banks 030..043, while the hardware names them 024..035 by adding
+                ' the super-bank bits of channel 7 to the F-bank field.  Mapping the
+                ' source number onto the hardware one is therefore a subtraction of
+                ' eight, which is what "SourceBankOf"/"HardwareBankOf" do.
                 a.Kind = AgcMemoryKind.Fixed
                 a.Banked = True
                 a.Super = True
-                a.FB = 24 + (value - 12288) \ 2048
+                ' The sources' super-bank numbers are 030..043; the hardware bank is
+                ' the source number minus eight, i.e. "032..035 + 024..031".
+                Dim src As Integer = 32 + (value - 12288) \ 2048
+                a.FB = src - 8
                 a.SReg = 2048 + (value And 2047)
             End If
             a.SReg = a.SReg And AgcWord.Mask15
