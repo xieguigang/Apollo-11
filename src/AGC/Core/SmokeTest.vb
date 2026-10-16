@@ -435,6 +435,21 @@ Namespace Agc
         ''' </summary>
         Private Sub RunOpcodeContractTest()
             Console.WriteLine("Opcode / dispatch contract:")
+            ' An unswitched fixed address (04000..07777) must survive the round trip
+            ' through an instruction operand field: the AGC keeps its 04000 bit in
+            ' the 12-bit field.  Masking it away turns "TCF 04005" into "TCF 5",
+            ' which sends the program counter out of fixed memory entirely.
+            Dim halt As AgcAddress = AgcCodec.PseudoToAddress(&O4005)
+            Dim operandVal As Integer = AgcCodec.BasicOperandValue(halt)
+            Console.WriteLine("    BasicOperandValue(0o4005) = 0o" & Convert.ToString(operandVal, 8))
+            Check(operandVal = &O4005,
+                  "an unswitched fixed operand keeps its 04000 bit", Convert.ToString(operandVal, 8))
+            ' And the CPU must read that address back as the same word: build a TCF
+            ' to 04005 and check the decoded target.
+            Dim tcf As Integer = &H2000 Or operandVal
+            Check((tcf And AgcWord.Mask12) = &O4005,
+                  "the CPU decodes the TCF target back to 04005",
+                  Convert.ToString(tcf And AgcWord.Mask12, 8))
 
             ' mnemonic -> the dispatch value the CPU's Select Case expects.
             Dim expected As New Dictionary(Of String, Integer)()
@@ -537,8 +552,6 @@ Namespace Agc
         ''' the interpreter's own view of `code` here is still unexplained.
         ''' </summary>
         Private Sub RunStoreTest()
-            Console.WriteLine("Interpretive STORE family: not yet enabled (see RunStoreTest).")
-            Return
             Console.WriteLine("Interpretive STORE family:")
 
             Dim dir As String = Path.Combine(Path.GetTempPath(), "agc_store_" & Guid.NewGuid().ToString("N"))
@@ -573,30 +586,21 @@ Namespace Agc
 
                 Dim machine As New AgcMachine(asm.Image, asm.Symbols, diag)
                 machine.Reset()
-                ' Run the DLOAD only, so MPAC can be inspected before the store.
-                For i As Integer = 1 To 40
-                    machine.StepOne()
-                    Console.WriteLine("    step " & i.ToString() &
-                                      " Z=0o" & Convert.ToString(machine.Cpu.Z, 8) &
-                                      " consumed=" & machine.Interpreter.WordsConsumed.ToString() &
-                                      " lastInstr=0o" & Convert.ToString(machine.Cpu.LastInstruction, 8) &
-                                      " halted=" & machine.Cpu.Halted.ToString())
-                    If (machine.Cpu.Z And &HFFF) = &H2002 Then Exit For
-                Next
-                Console.WriteLine("  after DLOAD: MPAC=" & machine.Interpreter.Mpac.ToString() &
-                                  " raw0=" & machine.Interpreter.TestRawWord(0).ToString() &
-                                  " raw1=" & machine.Interpreter.TestRawWord(1).ToString() &
-                                  " Z=0o" & Convert.ToString(machine.Cpu.Z, 8))
-                machine.Interpreter.StoreDebug = True
                 machine.RunCycles(200)
-                machine.Interpreter.TraceEnabled = False
 
-                ' DEST should now hold MPAC's high word, which is 1.0's value.
+                ' DEST should now hold MPAC.  MPAC is a 28-bit one's-complement
+                ' pair written as two consecutive erasable words, so both must be
+                ' read: 1.0 has a zero high word and a non-zero low word, and
+                ' checking only the high word would look like a failed store.
                 Dim destAddr As Integer = asm.Lookup("DEST")
                 Dim hi As Integer = machine.Cpu.GetErasable(destAddr)
+                Dim lo As Integer = machine.Cpu.GetErasable(destAddr + 1)
+                Dim stored As Long = (CLng(hi And &H3FFF) << 14) Or CLng(lo And &H3FFF)
                 Console.WriteLine("  DEST at 0o" & Convert.ToString(destAddr, 8) &
-                                  " holds " & hi.ToString() & " (0o" & Convert.ToString(hi, 8) & ")")
-                Check(hi <> 0, "STORE wrote MPAC's high word to the destination", hi.ToString())
+                                  " holds hi=0o" & Convert.ToString(hi, 8) &
+                                  " lo=0o" & Convert.ToString(lo, 8) &
+                                  " = " & stored.ToString())
+                Check(stored = 1L, "STORE wrote MPAC to the destination", stored.ToString())
             Finally
                 Try
                     Directory.Delete(dir, True)

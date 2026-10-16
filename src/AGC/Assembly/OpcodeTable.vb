@@ -260,6 +260,12 @@ Namespace Agc
             ' that set Q up beforehand.
             AddBasic("TCR", &H0, OperandFlags.Number)                             ' 00
             AddBasic("CCS", &H1000, OperandFlags.QC0 Or OperandFlags.Number)      ' 010
+            ' TCF dispatches to 020, which the CPU handles in its "Case &HA To &HF"
+            ' group -- that group is what performs the transfer, and the smoke
+            ' test's "TCF HALT" loop relies on it.  The reference binsource carries
+            ' 016526 at the TCF site, but its CAF at the same site also disagrees
+            ' with this table, so that file is a different ROM revision and is not
+            ' a word-for-word oracle for this source tree.
             AddBasic("TCF", &H2000, OperandFlags.None)                            ' 020
             AddBasic("DAS", &H2000, OperandFlags.QC0 Or OperandFlags.Plus1)       ' 020
             AddBasic("LXCH", &H2400, OperandFlags.QC2 Or OperandFlags.Number)     ' 022

@@ -339,14 +339,19 @@ Namespace Agc
             Dim ok As Boolean = ExecuteCode(code, operand)
             If ok Then
                 If code = 0 Then
-                    ' Code 0 is shared by EXIT and the whole STORE family, so
-                    ' InterpretiveTakesOperand cannot answer for it: whichever of
-                    ' EXIT and STORE is found first decides, and EXIT takes no
-                    ' operand while a store does.  Getting this wrong mis-advances
-                    ' the sequence by a word, which makes the interpretive program
-                    ' walk into its own operands.  A store's operand word is
-                    ' non-zero (it is a complemented store code); EXIT's is zero.
-                    WordsConsumed = If((operand And AgcWord.Mask15) <> 0, 2, 1)
+                    ' Code 0 is shared by EXIT and the whole STORE family.  The
+                    ' hardware settles which by taking the sign of the word that
+                    ' follows: NEWOPS does "CA 0 / CCS A / TCF DOSTORE", so an
+                    ' algebraically negative word is a store code and a positive or
+                    ' zero one is not.
+                    '
+                    ' A store code is the complement of (destination + 1), so it is
+                    ' always negative; the word after an EXIT is the next
+                    ' instruction, which is positive.  Testing the zero/non-zero
+                    ' distinction instead would mistake that next instruction for a
+                    ' store code -- and even a zero operand word is a legitimate
+                    ' store to address 0, so the sign is the only correct test.
+                    WordsConsumed = If((operand And &H4000) <> 0, 2, 1)
                 Else
                     WordsConsumed = If(AgcOpcodeTable.InterpretiveTakesOperand(code), 2, 1)
                 End If
@@ -671,6 +676,11 @@ Namespace Agc
         Private Sub WriteMpacTo(address As Integer)
             Dim rawHi As Integer = ReadErasable(AddrMpac)
             Dim rawLo As Integer = ReadErasable(AddrMpacLow)
+            If TraceEnabled Then
+                Console.WriteLine("      WriteMpacTo addr=0o" & Convert.ToString(address, 8) &
+                                  " hi=0o" & Convert.ToString(rawHi, 8) &
+                                  " lo=0o" & Convert.ToString(rawLo, 8))
+            End If
             WriteOperand(address, rawHi)
             WriteOperand(address + 1, rawLo)
         End Sub

@@ -93,6 +93,36 @@ Namespace Agc
         End Function
 
         ''' <summary>
+        ''' The value an instruction's 12-bit operand field takes for a basic-set
+        ''' address such as TC or TCF.
+        '''
+        ''' This is simply SReg masked to the field width, with one exception.  For
+        ''' an unswitched fixed address (04000..07777) SReg is the full address,
+        ''' including its 04000 bit, and masking it to 12 bits keeps that bit --
+        ''' which is vital, because dropping it turns "TCF 04005" into "TCF 5" and
+        ''' sends the program counter out of fixed memory.  For a banked address the
+        ''' bank is selected separately at run time and SReg already holds the
+        ''' offset-plus-bank form the hardware wants, so it is used as it stands;
+        ''' re-deriving the bank here would double-encode it.
+        ''' </summary>
+        Public Function BasicOperandValue(a As AgcAddress) As Integer
+            Return a.SReg And &HFFF
+        End Function
+
+        ''' <summary>
+        ''' A transfer instruction's target field is a full 12-bit fixed address, so
+        ''' the bank-selected form must be reduced to the address the hardware will
+        ''' fetch: for a banked fixed address that is the within-bank offset with
+        ''' bit 02000 set to mark the 02000..03777 window.
+        ''' </summary>
+        Public Function TransferTargetValue(a As AgcAddress) As Integer
+            If a.IsFixed AndAlso a.Banked Then
+                Return (a.SReg Or &H2000) And &HFFF
+            End If
+            Return a.SReg And &HFFF
+        End Function
+
+        ''' <summary>
         ''' Advance an address by <paramref name="increment"/> words, rolling the
         ''' bank number when the sub-address runs off the end of the bank.
         ''' </summary>

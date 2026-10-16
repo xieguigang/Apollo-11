@@ -165,7 +165,8 @@ Namespace Agc
             ' the instruction demands an address, prefer the address form.
             Dim wantsAddress As Boolean = (flags And (OperandFlags.Fixed Or OperandFlags.Erasable)) <> 0
 
-            Dim i As Integer = address.SReg And AgcWord.Mask15
+            Dim i As Integer = If(op = "TCF", AgcCodec.TransferTargetValue(address),
+                                  AgcCodec.BasicOperandValue(address))
 
             If wantsAddress Then
                 If (flags And OperandFlags.Fixed) <> 0 AndAlso Not address.IsFixed Then
