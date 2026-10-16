@@ -128,9 +128,13 @@ Namespace Agc
         ''' one's-complement magnitude whose sign lives in bit 14 (040000).
         ''' </summary>
         Private Function ReadMpac() As Integer
-            Dim hi As Integer = ReadErasable(AddrMpac) And &H3FFF
-            Dim lo As Integer = ReadErasable(AddrMpacLow) And &H3FFF
-            If (hi And &H2000) <> 0 Then
+            ' Read the words first: the sign is bit 14 of the high word, so it must
+            ' be tested before the value is narrowed to 14 bits.
+            Dim rawHi As Integer = ReadErasable(AddrMpac)
+            Dim rawLo As Integer = ReadErasable(AddrMpacLow)
+            Dim hi As Integer = rawHi And &H3FFF
+            Dim lo As Integer = rawLo And &H3FFF
+            If (rawHi And &H2000) <> 0 Then
                 ' Negative: complement each word within 14 bits and negate.
                 Dim mag As Integer = (((MpacModulus - hi) And &H3FFF) << 14) Or
                                      ((MpacModulus - lo) And &H3FFF)
