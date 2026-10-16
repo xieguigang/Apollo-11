@@ -184,8 +184,13 @@ Namespace Agc
 
             ' The transcribed sources occasionally indent a label past column 1,
             ' which hides it from the column rule above.  Find the field that
-            ' really is the operation; anything before it is the label.
-            Dim opIndex As Integer = FirstKnownOperatorIndex(fields, idx)
+            ' really is the operation; anything before it is the label.  A field
+            ' that is itself a known operation is never demoted to a label, so
+            ' "SETLOC 04000" written at column 1 stays a pseudo-op.
+            Dim opIndex As Integer = -1
+            If idx < fields.Count AndAlso Not IsKnownOperator(fields(idx)) Then
+                opIndex = FirstKnownOperatorIndex(fields, idx + 1)
+            End If
             If opIndex < 0 Then
                 ' No recognised operation on this line; keep the naive layout so
                 ' that the assembler can report the unknown operator.

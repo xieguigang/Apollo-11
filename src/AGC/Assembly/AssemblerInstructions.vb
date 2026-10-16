@@ -219,8 +219,7 @@ Namespace Agc
             ' module and are written as 030000 upwards.
             Dim a As New AgcAddress()
             a.Kind = AgcMemoryKind.Fixed
-            If value = 0 OrElse value = 1 Then
-                ' Banks 00 and 01 are written 000000..003777 and 004000..007777.
+            If value = 0 OrElse value = 1 Then                ' Banks 00 and 01 are written 000000..003777 and 004000..007777.
                 ' They live in the low half of physical banks 2 and 3; the high
                 ' half is reserved for the "BANK 2"/"BANK 3" view of the same
                 ' two banks.

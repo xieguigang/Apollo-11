@@ -341,14 +341,6 @@ Namespace Agc
         Private Sub EmitAtCurrent(word As Integer, Optional index As Integer = 0)
             If _pass <> 2 Then Return
             Dim target As AgcAddress = AgcCodec.IncPc(_pc, index)
-            If _traceLines > 0 Then
-                _traceLines -= 1
-                Console.WriteLine("EMIT " & AgcWord.ToOctal(word) & " at " & target.ToString() &
-                                  " kind=" & target.Kind.ToString() & " banked=" & target.Banked.ToString() &
-                                  " from " & _currentLine.File.Substring(_currentLine.File.LastIndexOf("\"c) + 1) &
-                                  ":" & _currentLine.LineNumber.ToString() &
-                                  " op=" & _currentLine.Opcode)
-            End If
             StoreWordAt(target, word)
             _emittedWords += 1
         End Sub
@@ -450,6 +442,16 @@ Namespace Agc
         Private Function BankUsed(bank As Integer) As Integer
             If bank < 0 OrElse bank >= AgcRopeImage.FixedBankCount Then Return 0
             Return _usedInBank(bank)
+        End Function
+
+        ''' <summary>
+        ''' Look up a symbol's pseudo address, or -1 when it is not defined.  This
+        ''' is the value a running program uses to find its own entry points.
+        ''' </summary>
+        Public Function Lookup(name As String) As Integer
+            Dim sym As AgcSymbol = Nothing
+            If Symbols.TryGetValue(name, sym) Then Return sym.Address.PseudoValue
+            Return -1
         End Function
 
         Private Function ParseRelativeAmount(text As String) As Integer
@@ -560,7 +562,14 @@ Namespace Agc
             End If
             Dim total As Integer = sym.PseudoValue + symOffset + offset
             result = AgcCodec.PseudoToAddress(total)
-            If result.Invalid Then result = AgcAddress.Constant(total)
+            If result.Invalid Then
+                result = AgcAddress.Constant(total)
+            Else
+                ' A stored symbol always denotes memory.  The "this is also a
+                ' plain number" interpretation is only kept for operands the
+                ' source wrote as literals, so that "CAF 0" still works.
+                result.IsConstant = False
+            End If
             Return result
         End Function
 

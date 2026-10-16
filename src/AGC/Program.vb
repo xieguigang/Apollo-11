@@ -99,9 +99,12 @@ Namespace Agc
                     CommandInfo(rest)
                 Case "selftest"
                     CommandSelfTest()
+                Case "smoke"
+                    CommandSmoke()
                 Case "compare"
                     CommandCompare(rest)
                 Case "probe"
+                    DebugProbe.DumpSynthetic()
                     If rest.Count > 0 Then
                         DebugProbe.DumpLines(rest(0), New Integer() {32, 34, 36, 37, 92})
                     End If
@@ -302,6 +305,12 @@ Namespace Agc
             Else
                 Console.WriteLine(failures.ToString() & " self test(s) failed.")
             End If
+        End Sub
+
+        ''' <summary>Run the end-to-end assembler + virtual hardware smoke test.</summary>
+        Private Sub CommandSmoke()
+            Dim failures As Integer = AgcSmokeTest.Run()
+            If failures > 0 Then Environment.ExitCode = 1
         End Sub
 
         ''' <summary>Development aid: print the first words of selected banks.</summary>

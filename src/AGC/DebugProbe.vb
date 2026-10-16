@@ -41,6 +41,31 @@ Namespace Agc
             Next
         End Sub
 
+        ''' <summary>
+        ''' Print the raw field split of a handful of synthetic lines, so that the
+        ''' column rules can be checked directly.
+        ''' </summary>
+        Public Sub DumpSynthetic()
+            Dim t As String = Chr(9)
+            Dim samples As String() = New String() { _
+                "SETLOC" & t & "4000", _
+                t & t & "SETLOC" & t & "4000", _
+                "SETLOC" & t & t & "4000", _
+                "LOOP" & t & "INCR" & t & "COUNT", _
+                t & "CA" & t & "ONE", _
+                t & t & "CA" & t & "ONE"}
+            For Each s As String In samples
+                Dim l As AgcLine = AgcSourceReader.ParseLine(s, "synthetic", 1)
+                Dim desc As String
+                If l Is Nothing Then
+                    desc = "<null>"
+                Else
+                    desc = "label=[" & l.Label & "] op=[" & l.Opcode & "] operand=[" & l.Operand & "]"
+                End If
+                Console.WriteLine("SYN [" & s.Replace(t, "<T>") & "] -> " & desc)
+            Next
+        End Sub
+
     End Module
 
 End Namespace
