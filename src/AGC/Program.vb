@@ -281,6 +281,7 @@ Namespace Agc
             Dim sourceDir As String = ResolveSourceDirectory(If(positional.Count > 0, positional(0), ""))
             If sourceDir = "" Then Return
             Dim asm As AgcAssembler = CreateAssembler(sourceDir, False)
+            asm._traceLines = 12
             asm.Assemble()
             File.WriteAllText(outFile, asm.Image.ToBinSource(False))
             Console.WriteLine("Wrote " & outFile)
@@ -316,22 +317,19 @@ Namespace Agc
             Dim sourceDir As String = ResolveSourceDirectory(positional(0))
             If sourceDir = "" Then Return
             Dim asm As AgcAssembler = CreateAssembler(sourceDir, False)
+            asm._traceLines = 12
             asm.Assemble()
-            For Each bank As Integer In New Integer() {0, 1, 2, 3, 4, 5, 6}
+            For Each bank As Integer In New Integer() {0, 1, 2, 3, 4}
                 Dim sb As New StringBuilder()
-                sb.Append("bank ").Append(bank.ToString("00")).Append(": ")
-                For o As Integer = 0 To 15
+                sb.Append("bank ").Append(bank.ToString()).Append(": ")
+                For o As Integer = 0 To 7
                     sb.Append(AgcWord.ToOctal(asm.Image.Fixed(bank, o))).Append(" ")
                 Next
+                sb.Append(" used=").Append(asm.Image.FixedWordCount(bank).ToString())
+                sb.Append(" hw=").Append(asm.Image.FixedHighWater(bank).ToString())
                 Console.WriteLine(sb.ToString())
             Next
-            Console.WriteLine("used b2=" & asm.UsedInBank(2).ToString() &
-                              " b3=" & asm.UsedInBank(3).ToString() &
-                              " b4=" & asm.UsedInBank(4).ToString() &
-                              " b8=" & asm.UsedInBank(8).ToString() &
-                              " written=" & asm.Image.WrittenCount.ToString() &
-                              " cnt2=" & asm.Image.FixedWordCount(2).ToString() &
-                              " hw2=" & asm.Image.FixedHighWater(2).ToString())
+            Console.WriteLine("written=" & asm.Image.WrittenCount.ToString())
         End Sub
 
         ''' <summary>
@@ -361,6 +359,7 @@ Namespace Agc
 
             Dim asm As AgcAssembler = CreateAssembler(sourceDir, False)
             Console.WriteLine("Assembling " & asm.ProgramName & "...")
+            asm._traceLines = 12
             asm.Assemble()
             Console.WriteLine("Assembled " & asm.EmittedWords.ToString("N0") & " words, " &
                               asm.Diagnostics.ErrorCount.ToString("N0") & " errors.")

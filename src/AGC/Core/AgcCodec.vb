@@ -138,17 +138,17 @@ Namespace Agc
             Dim minValue As Integer, maxValue As Integer
             If result.IsErasable Then
                 If result.Unbanked Then
-                    minValue = 0 : maxValue = 767                ' 01377
+                    minValue = 0 : maxValue = 1023               ' 00000..01777
                 Else
                     minValue = 1280 : maxValue = 1535            ' 02400..02777
-                    result.EB += bankIncrement
                 End If
             ElseIf result.IsFixed Then
                 If result.Banked Then
                     minValue = 2048 : maxValue = 4095            ' 04000..07777
-                    result.FB += bankIncrement
                 Else
-                    minValue = 4096 : maxValue = 8191            ' 010000..017777
+                    ' The unswitched fixed window holds banks 02 and 03, which
+                    ' together span 04000..07777.
+                    minValue = 2048 : maxValue = 4095
                 End If
             Else
                 result.Invalid = True

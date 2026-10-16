@@ -182,6 +182,23 @@ Namespace Agc
                 idx = 1
             End If
 
+            ' The transcribed sources occasionally indent a label past column 1,
+            ' which hides it from the column rule above.  Find the field that
+            ' really is the operation; anything before it is the label.
+            Dim opIndex As Integer = FirstKnownOperatorIndex(fields, idx)
+            If opIndex < 0 Then
+                ' No recognised operation on this line; keep the naive layout so
+                ' that the assembler can report the unknown operator.
+                opIndex = idx
+            ElseIf opIndex > idx Then
+                For k As Integer = idx To opIndex - 1
+                    If line.Label = "" Then
+                        line.Label = fields(k)
+                    End If
+                Next
+                idx = opIndex
+            End If
+
             ' Distribute the remaining fields.  These are written as separate
             ' statements rather than colon-separated ones so that the assignment
             ' target and the index update cannot be mis-associated.
@@ -206,6 +223,50 @@ Namespace Agc
                 idx = idx + 1
             End If
             Return line
+        End Function
+
+        ''' <summary>True when the text names an operation, pseudo-op or alias.</summary>
+        Public Shared Function IsKnownOperator(text As String) As Boolean
+            If String.IsNullOrEmpty(text) Then Return False
+            If AgcOpcodeTable.IsInterpretive(text) Then Return True
+            Dim o As AgcOpcode = Nothing
+            If AgcOpcodeTable.TryGetBasic(text, o) Then Return True
+            Return IsPseudoOpName(text)
+        End Function
+
+        ''' <summary>
+        ''' True for the pseudo-ops the assembler handles natively (directives and
+        ''' data producers) as opposed to instructions.
+        ''' </summary>
+        Public Shared Function IsPseudoOpName(text As String) As Boolean
+            Select Case text
+                Case "SETLOC", "LOC", "BANK", "BLOCK", "EBANK=", "SBANK=", "EQUALS", "=", "=MINUS",
+                     "=ECADR", "CHECK=", "ERASE", "COUNT", "COUNT*", "BNKSUM", "BANKSUM", "MEMORY",
+                     "SUBRO", "SECSIZ", "OCT", "OCTAL", "DEC", "DEC*", "2DEC", "2DEC*", "2OCT", "MM",
+                     "VN", "NV", "ADRES", "CADR", "FCADR", "2FCADR", "ECADR", "GENADR", "REMADR",
+                     "DNPTR", "-DNPTR", "BBCON", "BBCON*", "2CADR", "2BCADR", "XCADR",
+                     "1DNADR", "2DNADR", "3DNADR", "4DNADR", "5DNADR", "6DNADR",
+                     "-1DNADR", "-2DNADR", "-3DNADR", "-4DNADR", "-5DNADR", "-6DNADR",
+                     "-GENADR", "-2CADR", "-DNCHAN", "DNCHAN", "-CCS"
+                    Return True
+                Case Else
+                    Return False
+            End Select
+        End Function
+
+        ''' <summary>
+        ''' Re-lay a line whose first field turned out not to be an operation.
+        ''' The transcribed sources sometimes indent a label past column 1, in
+        ''' which case the label was mistaken for the operation.  When the first
+        ''' field is not a known operation but a later field is, the fields are
+        ''' shifted right so that the first becomes the label.
+
+        ''' <summary>Find the first field that names a known operation, or -1.</summary>
+        Private Shared Function FirstKnownOperatorIndex(fields As List(Of String), start As Integer) As Integer
+            For i As Integer = start To fields.Count - 1
+                If IsKnownOperator(fields(i)) Then Return i
+            Next
+            Return -1
         End Function
 
         ''' <summary>True for the "+3"/"-2" style relative labels.</summary>

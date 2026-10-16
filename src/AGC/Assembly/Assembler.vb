@@ -154,6 +154,8 @@ Namespace Agc
             _assembledLines = 0
         End Sub
 
+        Public Property _traceLines As Integer = 0
+
         Private Sub RunPass()
             For Each line As AgcLine In _lines
                 _currentLine = line
