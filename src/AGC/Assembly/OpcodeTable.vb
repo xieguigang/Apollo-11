@@ -72,6 +72,37 @@ Namespace Agc
             Return _basic.ContainsKey(name)
         End Function
 
+        ''' <summary>
+        ''' The yaAGC dispatch value for an instruction word.  The reference
+        ''' engine computes "ExtendedOpcode = Instruction >> 9" and ORs in 0100
+        ''' (octal) when the EXTEND flag is set, so this is the number the
+        ''' executor switches on.
+        ''' </summary>
+        Public Function DispatchValueFromWord(word As Integer) As Integer
+            Return (word >> 9) And &H7F
+        End Function
+
+        ''' <summary>The dispatch value for a mnemonic.</summary>
+        Public Function DispatchValueForName(name As String) As Integer
+            Dim op As AgcOpcode = Nothing
+            If Not _basic.TryGetValue(name, op) Then Return -1
+            Return (op.Opcode >> 9) And &H7F
+        End Function
+
+        ''' <summary>
+        ''' Every mnemonic whose dispatch value matches the given word.  Names can
+        ''' share a value (for example CAF and CAE are both CA), in which case the
+        ''' caller discriminates using the memory type.
+        ''' </summary>
+        Public Function CandidatesForWord(word As Integer) As List(Of String)
+            Dim key As Integer = DispatchValueFromWord(word)
+            Dim result As New List(Of String)()
+            For Each pair As KeyValuePair(Of String, AgcOpcode) In _basic
+                If ((pair.Value.Opcode >> 9) And &H7F) = key Then result.Add(pair.Key)
+            Next
+            Return result
+        End Function
+
         Public Function TryGetBasic(name As String, ByRef op As AgcOpcode) As Boolean
             Return _basic.TryGetValue(name, op)
         End Function
@@ -140,58 +171,63 @@ Namespace Agc
         ' Block II basic instruction set
         ' ------------------------------------------------------------------
         Private Sub BuildBasic()
-            ' -- Non-extended instructions.  The value stored is the complete
-            ' opcode field, i.e. bits 9-11 of the instruction word, which is the
-            ' instruction number shifted left three places.  For example CA is
-            ' instruction 011 in octal, so the field is 011000 (bits 12-14 clear).
-            ' These values are the ones the yaAGC reference decoder expects:
-            '   extendedOpcode = (instruction >> 9) | 0100 (octal) when EXTEND is set
+            ' -- The AGC instruction word is
+            '       bit 15  parity
+            '       bits 10-12  opcode         (the "instruction number")
+            '       bits 9   EXTEND flag (also the low bit of the quarter code)
+            '       bits 0-9   address
+            ' so an opcode field value is (number << 10).  These values come
+            ' straight from the Block II instruction list: TCF is instruction 002
+            ' and encodes as 020000 (octal), DAS is 004 and encodes as 040000, and
+            ' CA is 011 and encodes as 060000.  The trailing digit of each octal
+            ' value below is the instruction number times two.
+            ' Each value is the instruction field the CPU switches on, which the
+            ' reference engine computes as "(instruction >> 9) | 0100 when EXTEND
+            ' is set".  The comment on each line is the dispatch value the CPU's
+            ' Select Case expects, so the two sides cannot drift apart.
             AddBasic("TC", &H0, OperandFlags.Number)                              ' 000
-            AddBasic("CCS", &H1000, OperandFlags.QC0 Or OperandFlags.Number)      ' 001
-            AddBasic("TCF", &H2000, OperandFlags.QCNot0)                          ' 002
-            AddBasic("DAS", &H4000, OperandFlags.QC0 Or OperandFlags.Plus1)       ' 004
-            AddBasic("LXCH", &H5000, OperandFlags.QC2 Or OperandFlags.Number)     ' 005
-            AddBasic("INCR", &H6000, OperandFlags.QC2)                            ' 006
-            AddBasic("ADS", &H7000, OperandFlags.QC2)                             ' 007
-            AddBasic("CA", &H9000, OperandFlags.Number)                           ' 011
-            AddBasic("CAF", &H9000, OperandFlags.Fixed Or OperandFlags.Number)
-            AddBasic("CAE", &H9000, OperandFlags.Erasable Or OperandFlags.Number)
-            AddBasic("CS", &HA000, OperandFlags.Number)                           ' 012
-            AddBasic("INDEX", &HC000)                                             ' 014
-            AddBasic("NDX", &HC000)
-            AddBasic("DXCH", &HD000, OperandFlags.QC1 Or OperandFlags.Plus1 Or OperandFlags.Number)  ' 015
-            AddBasic("TS", &HE000, OperandFlags.QC2 Or OperandFlags.Number)       ' 016
-            AddBasic("XCH", &HF000, OperandFlags.QC3 Or OperandFlags.Number)      ' 017
-            AddBasic("AD", &H10000)                                               ' 020
-            AddBasic("MASK", &H18000)                                             ' 030
-            AddBasic("MSK", &H18000)
+            AddBasic("CCS", &H4000, OperandFlags.QC0 Or OperandFlags.Number)      ' 010
+            AddBasic("TCF", &H8000, OperandFlags.QCNot0)                          ' 020
+            AddBasic("LXCH", &H48000, OperandFlags.QC2 Or OperandFlags.Number)    ' 022
+            AddBasic("INCR", &H60000, OperandFlags.QC2)                           ' 024
+            AddBasic("ADS", &H68000, OperandFlags.QC2)                            ' 026
+            AddBasic("CA", &H18000, OperandFlags.Number)                          ' 030
+            AddBasic("CAF", &H18000, OperandFlags.Fixed Or OperandFlags.Number)
+            AddBasic("CAE", &H18000, OperandFlags.Erasable Or OperandFlags.Number)
+            AddBasic("CS", &H20000, OperandFlags.Number)                          ' 040
+            AddBasic("INDEX", &H50000)                                            ' 050
+            AddBasic("NDX", &H50000)
+            AddBasic("DXCH", &H54000, OperandFlags.QC1 Or OperandFlags.Plus1 Or OperandFlags.Number)  ' 052
+            AddBasic("TS", &H58000, OperandFlags.QC2 Or OperandFlags.Number)      ' 054
+            AddBasic("XCH", &H5C000, OperandFlags.QC3 Or OperandFlags.Number)     ' 056
+            AddBasic("AD", &H60000)                                               ' 060
+            AddBasic("MASK", &H70000)                                             ' 070
+            AddBasic("MSK", &H70000)
+            ' DAS occupies the same dispatch value as AD (060, so that DDOUBL
+            ' aliases AD); the CPU tells them apart by the quarter code.
+            AddBasic("DAS", &H60000, OperandFlags.QC0 Or OperandFlags.Plus1)
 
-            ' -- Extended instructions (EXTEND required).  The opcode field here is
-            ' also the instruction number shifted left three places; the decoder
-            ' ORs in 0100 (octal) when the EXTEND flag is set, which is implicit in
-            ' the values below (for example BZF is 0110 octal -> 0110000, and
-            ' 0110000 >> 9 = 0110).
+            ' -- Extended instructions (EXTEND required).  The dispatch value is
+            ' the basic value plus 0100 (octal).
             AddBasic("READ", &H20000, OperandFlags.Extended Or OperandFlags.Number)    ' 0100
-            AddBasic("WRITE", &H24000, OperandFlags.Extended Or OperandFlags.Number)   ' 0101
-            AddBasic("RAND", &H28000, OperandFlags.Extended Or OperandFlags.Number)    ' 0102
-            AddBasic("WAND", &H2C000, OperandFlags.Extended Or OperandFlags.Number)    ' 0103
-            AddBasic("ROR", &H30000, OperandFlags.Extended Or OperandFlags.Number)     ' 0104
-            AddBasic("WOR", &H34000, OperandFlags.Extended Or OperandFlags.Number)     ' 0105
-            AddBasic("RXOR", &H38000, OperandFlags.Extended Or OperandFlags.Number)    ' 0106
-            AddBasic("EDRUPT", &H3C000, OperandFlags.Extended)                         ' 0107
-            AddBasic("BZF", &H40000, OperandFlags.Extended Or OperandFlags.QCNot0)     ' 0110
-            AddBasic("MSU", &H48000, OperandFlags.Extended Or OperandFlags.QCNot0)     ' 0111
-            AddBasic("DV", &H44000, OperandFlags.Extended Or OperandFlags.QCNot0)      ' 0110 with the DIVIDE
-            ' (DV shares the 0110 encoding with BZF; bit 10 of the operand selects
-            ' the divide, so both are legal and the CPU distinguishes them.)
-            AddBasic("QXCH", &H50000, OperandFlags.Extended Or OperandFlags.QC2 Or OperandFlags.Number)  ' 0122
-            AddBasic("AUG", &H54000, OperandFlags.Extended Or OperandFlags.QC2)        ' 0124
-            AddBasic("DIM", &H58000, OperandFlags.Extended Or OperandFlags.QC2)        ' 0126
-            AddBasic("DCA", &H5C000, OperandFlags.Extended Or OperandFlags.Plus1 Or OperandFlags.Number) ' 0130
-            AddBasic("DCS", &H60000, OperandFlags.Extended Or OperandFlags.Plus1 Or OperandFlags.Number) ' 0140
-            AddBasic("SU", &H64000, OperandFlags.Extended Or OperandFlags.QCNot0)      ' 0160
-            AddBasic("BZMF", &H68000, OperandFlags.Extended Or OperandFlags.QCNot0)    ' 0162
-            AddBasic("MP", &H70000, OperandFlags.Extended)                             ' 0170
+            AddBasic("WRITE", &H22000, OperandFlags.Extended Or OperandFlags.Number)   ' 0101
+            AddBasic("RAND", &H24000, OperandFlags.Extended Or OperandFlags.Number)    ' 0102
+            AddBasic("WAND", &H26000, OperandFlags.Extended Or OperandFlags.Number)    ' 0103
+            AddBasic("ROR", &H28000, OperandFlags.Extended Or OperandFlags.Number)     ' 0104
+            AddBasic("WOR", &H2A000, OperandFlags.Extended Or OperandFlags.Number)     ' 0105
+            AddBasic("RXOR", &H2C000, OperandFlags.Extended Or OperandFlags.Number)    ' 0106
+            AddBasic("EDRUPT", &H2E000, OperandFlags.Extended)                         ' 0107
+            AddBasic("DV", &H90000, OperandFlags.Extended Or OperandFlags.QCNot0)      ' 0110
+            AddBasic("BZF", &HA0000, OperandFlags.Extended Or OperandFlags.QCNot0)     ' 0112
+            AddBasic("MSU", &HA0000, OperandFlags.Extended Or OperandFlags.QCNot0)     ' 0120
+            AddBasic("QXCH", &HA4000, OperandFlags.Extended Or OperandFlags.QC2 Or OperandFlags.Number)  ' 0122
+            AddBasic("AUG", &HA8000, OperandFlags.Extended Or OperandFlags.QC2)        ' 0124
+            AddBasic("DIM", &HAC000, OperandFlags.Extended Or OperandFlags.QC2)        ' 0126
+            AddBasic("DCA", &HB0000, OperandFlags.Extended Or OperandFlags.Plus1 Or OperandFlags.Number) ' 0131
+            AddBasic("DCS", &HC0000, OperandFlags.Extended Or OperandFlags.Plus1 Or OperandFlags.Number) ' 0141
+            AddBasic("SU", &HE0000, OperandFlags.Extended Or OperandFlags.QCNot0)      ' 0160
+            AddBasic("BZMF", &HE4000, OperandFlags.Extended Or OperandFlags.QCNot0)    ' 0162
+            AddBasic("MP", &HF0000, OperandFlags.Extended)                             ' 0170
 
             ' -- Aliases (the AGC assembler expands these in place).
             AddAlias("COM", "CS", "A")

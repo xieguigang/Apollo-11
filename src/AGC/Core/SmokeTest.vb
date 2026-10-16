@@ -24,13 +24,51 @@ Namespace Agc
             _failed = 0
             _passed = 0
 
+            ' Characterise VB's right-shift operator across all amounts, using a
+            ' single-bit probe value so nothing else can interfere.
+            Dim probeWord As Integer = 1
+            Dim sbShift As New System.Text.StringBuilder()
+            For s As Integer = 0 To 20
+                sbShift.Append(s).Append(":").Append((probeWord >> s).ToString()).Append(" ")
+            Next
+            Console.WriteLine("SHIFTMAP 1>>n = " & sbShift.ToString())
+            Dim high As Integer = &H18000
+            Dim sbShift2 As New System.Text.StringBuilder()
+            For s As Integer = 0 To 12
+                sbShift2.Append(s).Append(":").Append((high >> s).ToString()).Append(" ")
+            Next
+            Console.WriteLine("SHIFTMAP 0x18000>>n = " & sbShift2.ToString())
+            Dim div As Integer = high \ 512
+            Console.WriteLine("DIVMETHOD 0x18000 \\ 512 = " & div.ToString() &
+                              " ; ((0x18000 / 512) And 127) = " & ((high \ 512) And 127).ToString())
+
+            ' Determine the exact scope of the And misbehaviour before working
+            ' around it: 192 And 127 must be 0 (11000000 and 01111111 share no bit).
+            For Each pair As Integer() In New Integer()() {
+                    New Integer() {192, 127}, New Integer() {64, 127},
+                    New Integer() {255, 127}, New Integer() {128, 127},
+                    New Integer() {192, 255}, New Integer() {193, 127},
+                    New Integer() {15, 7}, New Integer() {240, 15}}
+                Console.WriteLine("ANDCASE " & pair(0).ToString() & " And " & pair(1).ToString() &
+                                  " = " & (pair(0) And pair(1)).ToString() &
+                                  " ; Mod method = " & (pair(0) Mod (pair(1) + 1)).ToString())
+            Next
+
             Dim probe As AgcOpcode = Nothing
-            Console.WriteLine("LITERAL &H9000 = " & (&H9000).ToString() &
-                              " octal=" & AgcWord.ToOctal(&H9000))
-            Console.WriteLine("LITERAL &HE000 = " & (&HE000).ToString() &
-                              " octal=" & AgcWord.ToOctal(&HE000))
-            Console.WriteLine("LITERAL &H10000 = " & (&H10000).ToString() &
-                              " octal=" & AgcWord.ToOctal(&H10000))
+            ' The executor switches on the value yaAGC calls ExtendedOpcode, which
+            ' is "instruction >> 9".  This table is the contract between the
+            ' assembler and the CPU dispatch cases.
+            Dim names As String() = New String() {"TC", "CCS", "TCF", "DAS", "LXCH", "INCR",
+                                                  "ADS", "CA", "CS", "INDEX", "DXCH", "TS",
+                                                  "XCH", "AD", "MASK", "READ", "WRITE", "RAND",
+                                                  "WAND", "ROR", "WOR", "RXOR", "EDRUPT",
+                                                  "BZF", "MSU", "DV", "QXCH", "AUG", "DIM",
+                                                  "DCA", "DCS", "SU", "BZMF", "MP"}
+            Dim sb As New System.Text.StringBuilder()
+            For Each nm As String In names
+                sb.Append(nm).Append("=").Append(AgcOpcodeTable.DispatchValueForName(nm).ToString()).Append("  ")
+            Next
+            Console.WriteLine("DISPATCH " & sb.ToString())
             If AgcOpcodeTable.TryGetBasic("CA", probe) Then
                 Console.WriteLine("TABLE CA opcode=" & AgcWord.ToOctal(probe.Opcode) &
                                   " flags=" & probe.Flags.ToString())
@@ -142,9 +180,11 @@ Namespace Agc
                 machine.Cpu.Tracer = Sub(c As AgcCpu)
                                          If traceCount < 8 Then
                                              traceCount += 1
-                                             Console.WriteLine("    trace Z=" & Octal(c.Z) &
-                                                               " instr=" & Octal(c.LastInstruction) &
-                                                               " opcode=" & Octal(c.LastOpcode))
+                                             Console.WriteLine("    trace Z=" & AgcWord.ToOctal(c.Z) &
+                                                               " instr=" & AgcWord.ToOctal(c.LastInstruction) &
+                                                               " opcode=" & AgcWord.ToOctal(c.LastOpcode) &
+                                                               " (dec instr=" & c.LastInstruction.ToString() &
+                                                               " op=" & c.LastOpcode.ToString() & ")")
                                          End If
                                      End Sub
                 machine.RunCycles(600)

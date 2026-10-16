@@ -396,9 +396,16 @@ Namespace Agc
                 Else
                     word = Memory.ReadFixed(programCounter)
                 End If
-                instruction = OverflowCorrected(AddSP16(SignExtend(IndexValue), SignExtend(word)))
+                ' An index value is applied to the instruction word itself.  The
+                ' word is 16 bits wide (including the parity bit), and its top
+                ' three bits are the opcode, so 17 working bits must be kept.
+                Dim sum As Integer = (IndexValue And AgcWord.Mask17) + (word And AgcWord.Mask17)
+                If sum > AgcWord.Mask17 Then
+                    ' Overflow off the top wraps in the AGC's adder.
+                    sum = sum And AgcWord.Mask15
+                End If
+                instruction = sum And AgcWord.Mask17
             End If
-            instruction = instruction And AgcWord.Mask15
 
             Dim extraCode As Boolean = ExtraCode
             Dim extendedOpcode As Integer = (instruction >> 9) And &H3F
@@ -512,7 +519,7 @@ Namespace Agc
                 ' ----------------------------------------------------------
                 ' CCS (010-011)
                 ' ----------------------------------------------------------
-                Case &H8, &H9
+                Case &H40, &H48
                     Dim operand16 As Integer
                     If address10 < REG16 Then
                         Dim valueK As Integer = (A16 << 15) Or (A And AgcWord.Mask15)
@@ -536,14 +543,15 @@ Namespace Agc
                 ' ----------------------------------------------------------
                 ' TCF and the 012-017 class
                 ' ----------------------------------------------------------
-                Case &HA To &HF
+                Case &H50 To &H7F
                     NextZ = address12
                     executedTc = True
 
                 ' ----------------------------------------------------------
                 ' DAS / DDOUBL (020-021)
                 ' ----------------------------------------------------------
-                Case &H10, &H11
+                Case &H80, &H88
+                    ' DAS / DDOUBL (020-021)
                     Dim msw As Integer, lsw As Integer
                     If address10 = RegL Then
                         lsw = AddSP16(L, L)
@@ -584,7 +592,8 @@ Namespace Agc
                 ' ----------------------------------------------------------
                 ' LXCH / ZL (022-023)
                 ' ----------------------------------------------------------
-                Case &H12, &H13
+                Case &H90, &H98
+                    ' LXCH / ZL (022-023)
                     If address10 = RegL Then
                         ' no-op
                     ElseIf address10 = RegZERO Then
@@ -604,7 +613,8 @@ Namespace Agc
                 ' ----------------------------------------------------------
                 ' INCR (024-025)
                 ' ----------------------------------------------------------
-                Case &H14, &H15
+                Case &HA0, &HA8
+                    ' INCR (024-025)
                     If address10 < &H400 Then
                         SetErasable(address10, AddSP16(1, GetErasable(address10)))
                     Else
@@ -617,7 +627,8 @@ Namespace Agc
                 ' ----------------------------------------------------------
                 ' ADS (026-027)
                 ' ----------------------------------------------------------
-                Case &H16, &H17
+                Case &HB0, &HB8
+                    ' ADS (026-027)
                     Dim sum As Integer
                     If address10 = RegA Then
                         sum = AddSP16(accumulator16, accumulator16)
@@ -633,7 +644,7 @@ Namespace Agc
                 ' ----------------------------------------------------------
                 ' CA (030-037)
                 ' ----------------------------------------------------------
-                Case &H18 To &H1F
+                Case &HC0 To &HF8
                     If address12 <> RegA Then
                         A = ReadAddress12(address12) And AgcWord.Mask15
                         A16 = 0
@@ -642,7 +653,8 @@ Namespace Agc
                 ' ----------------------------------------------------------
                 ' CS (040-047)
                 ' ----------------------------------------------------------
-                Case &H20 To &H27
+                Case &H100 To &H138
+                    ' CS (040-047)
                     If address12 = RegA Then
                         A = AgcWord.Complement(A)
                     Else
@@ -653,14 +665,16 @@ Namespace Agc
                 ' ----------------------------------------------------------
                 ' INDEX (050-051) and RESUME (0150-0157)
                 ' ----------------------------------------------------------
-                Case &H28, &H29
+                Case &H140, &H148
+                    ' INDEX (050-051)
                     If address10 = &HF Then
                         ResumeFromInterrupt()
                     Else
                         IndexValue = OverflowCorrected(ReadAddress10(address10))
                     End If
 
-                Case &H68 To &H6F
+                Case &H340 To &H378
+                    ' RESUME (0150-0157)
                     If address12 = &HE Then
                         ResumeFromInterrupt()
                     Else
@@ -671,7 +685,8 @@ Namespace Agc
                 ' ----------------------------------------------------------
                 ' DXCH (052-053)
                 ' ----------------------------------------------------------
-                Case &H2A, &H2B
+                Case &H150, &H158
+                    ' DXCH (052-053)
                     If address10 = RegL Then
                         L = SignExtend(OverflowCorrected(L)) And AgcWord.Mask15
                     Else
@@ -688,7 +703,8 @@ Namespace Agc
                 ' ----------------------------------------------------------
                 ' TS / TCAA / OVSK (054-055)
                 ' ----------------------------------------------------------
-                Case &H2C, &H2D
+                Case &H160, &H168
+                    ' TS / TCAA / OVSK (054-055)
                     If address10 = RegA Then
                         If overflow <> 0 Then NextZ += 1
                     ElseIf address10 = RegZ Then
@@ -707,7 +723,8 @@ Namespace Agc
                 ' ----------------------------------------------------------
                 ' XCH (056-057)
                 ' ----------------------------------------------------------
-                Case &H2E, &H2F
+                Case &H170, &H178
+                    ' XCH (056-057)
                     If address10 <> RegA Then
                         Dim accumulator As Integer = OverflowCorrected(accumulator16)
                         Dim operand16 As Integer = ReadAddress10(address10)
@@ -720,7 +737,8 @@ Namespace Agc
                 ' ----------------------------------------------------------
                 ' AD (060-067)
                 ' ----------------------------------------------------------
-                Case &H30 To &H37
+                Case &H180 To &H1B8
+                    ' AD (060-067)
                     Dim accumulator As Integer
                     If address12 = RegA Then
                         accumulator = AddSP16(accumulator16, accumulator16)
@@ -733,7 +751,8 @@ Namespace Agc
                 ' ----------------------------------------------------------
                 ' MASK (070-077)
                 ' ----------------------------------------------------------
-                Case &H38 To &H3F
+                Case &H1C0 To &H1F8
+                    ' MASK (070-077)
                     A = OverflowCorrected(accumulator16) And ReadAddress12(address12)
                     A16 = 0
 
