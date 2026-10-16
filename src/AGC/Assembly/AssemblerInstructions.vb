@@ -220,9 +220,13 @@ Namespace Agc
             Dim a As New AgcAddress()
             a.Kind = AgcMemoryKind.Fixed
             If value = 0 OrElse value = 1 Then
+                ' Banks 00 and 01 are written 000000..003777 and 004000..007777.
+                ' They live in the low half of physical banks 2 and 3; the high
+                ' half is reserved for the "BANK 2"/"BANK 3" view of the same
+                ' two banks.
                 a.Banked = False
                 a.Unbanked = True
-                a.SReg = value * 2048 + NextFreeInBank(value)
+                a.SReg = 4096 + value * 1024 + NextFreeInBank(value)
             ElseIf value = 2 OrElse value = 3 Then
                 a.Banked = False
                 a.Unbanked = True
@@ -243,15 +247,12 @@ Namespace Agc
         End Sub
 
         ''' <summary>
-        ''' Words already committed to a fixed bank, as a high-water mark.  The
-        ''' AGC bank number is mapped onto the physical bank first, because
-        ''' "BANK 0"/"BANK 1" and "BANK 2"/"BANK 3" address the same two banks of
-        ''' the rope image.
+        ''' Words already committed to an AGC bank, as a high-water mark.  Banks
+        ''' 00/01 and 02/03 share physical rope banks but are allocated
+        ''' independently, so the AGC bank number is used directly.
         ''' </summary>
         Private Function NextFreeInBank(bank As Integer) As Integer
-            Dim physical As Integer = AgcAssembler.PhysicalBank(bank)
-            If physical < 0 OrElse physical >= AgcRopeImage.FixedBankCount Then Return 0
-            Return BankUsed(physical)
+            Return BankUsage(bank)
         End Function
 
         Private Sub PseudoBlock(line As AgcLine)
@@ -277,7 +278,8 @@ Namespace Agc
             Else
                 a.Kind = AgcMemoryKind.Fixed
                 a.Unbanked = True
-                a.SReg = 4096 + (value - 2) * 2048 + NextFreeInBank(value)
+                ' BLOCK 2 -> 010000 (bank 02); BLOCK 3 -> 014000 (bank 03).
+                a.SReg = 4096 + (value - 2) * 1024 + NextFreeInBank(value)
             End If
             _pc = a
         End Sub

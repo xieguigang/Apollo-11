@@ -57,18 +57,20 @@ Namespace Agc
         End Function
 
         ''' <summary>
-        ''' The AGC bank number a location counter value belongs to, counting the
-        ''' two independently-allocated regions of banks 02 and 03 separately.
+        ''' The AGC bank number a location belongs to.  Banks 00/01 and 02/03
+        ''' share physical rope banks but are allocated independently: within
+        ''' physical bank 2 the low 1024 words are "BANK 0" (written
+        ''' 000000..003777) and the high 1024 are "BANK 2" (written
+        ''' 010000..013777); physical bank 3 splits into "BANK 1" and "BANK 3"
+        ''' the same way.
         ''' </summary>
-        Public Shared Function LogicalBank(physicalBank As Integer, sreg As Integer) As Integer
+        Public Shared Function LogicalBank(physicalBank As Integer, offset As Integer) As Integer
             If physicalBank = 2 Then
-                ' 000000..003777 is "BANK 0"; 010000..013777 is "BANK 2".
-                If sreg < 1024 Then Return 0
+                If offset < 1024 Then Return 0
                 Return 2
             End If
             If physicalBank = 3 Then
-                ' 004000..007777 is "BANK 1"; 014000..017777 is "BANK 3".
-                If sreg < 1024 Then Return 1
+                If offset < 1024 Then Return 1
                 Return 3
             End If
             Return physicalBank
@@ -190,7 +192,6 @@ Namespace Agc
             For Each line As AgcLine In _lines
                 _currentLine = line
                 ProcessLine(line)
-                UpdateBankCounts()
             Next
             If _interpOperandsPending > 0 Then
                 Diagnostics.Fatal(_currentLine.File, _currentLine.LineNumber,
@@ -332,6 +333,7 @@ Namespace Agc
                 If _pass = 2 Then StoreWordAt(AgcCodec.IncPc(start, i), words(i))
                 _emittedWords += 1
             Next
+            CreditWords(start, words.Count)
             _pc = AgcCodec.IncPc(start, words.Count)
         End Sub
 
@@ -343,6 +345,7 @@ Namespace Agc
         End Sub
 
         Private Sub Advance(count As Integer)
+            CreditWords(_pc, count)
             _pc = AgcCodec.IncPc(_pc, count)
         End Sub
 
@@ -394,6 +397,46 @@ Namespace Agc
             If pc.Invalid OrElse Not pc.IsAddress OrElse Not pc.IsFixed OrElse pc.Overflow Then Return
             CreditWords(pc, 0)
         End Sub
+
+        ''' <summary>
+        ''' Credit words to the AGC bank that contains <paramref name="address"/>,
+        ''' so that "BANK n" and "BLOCK n" place the following code after anything
+        ''' already assembled in that region.  Banks 00/01 and 02/03 share physical
+        ''' rope banks but are allocated independently, so the AGC bank number is
+        ''' used as the counter index.
+        ''' </summary>
+        Private Sub CreditWords(address As AgcAddress, count As Integer)
+            If Not address.IsFixed OrElse address.Invalid Then Return
+            Dim sreg As Integer = address.SReg And AgcWord.Mask15
+            Dim physical As Integer
+            Dim offset As Integer
+            If address.Unbanked Then
+                If sreg >= 4096 Then
+                    physical = 2 + (sreg - 4096) \ 1024
+                    offset = (sreg - 4096) Mod 1024
+                ElseIf sreg >= 2048 Then
+                    physical = 2 + (sreg - 2048) \ 1024
+                    offset = (sreg - 2048) Mod 1024
+                Else
+                    Return
+                End If
+            Else
+                physical = address.FB + 8 * If(address.Super, 1, 0)
+                offset = sreg - 2048
+            End If
+            If physical < 0 OrElse physical >= AgcRopeImage.FixedBankCount Then Return
+            Dim logical As Integer = LogicalBank(physical, offset)
+            Dim used As Integer = (offset Mod 1024) + count
+            If used < 0 Then used = 0
+            If used > AgcRopeImage.FixedBankWords Then used = AgcRopeImage.FixedBankWords
+            If used > _usedInBank(logical) Then _usedInBank(logical) = used
+        End Sub
+
+        ''' <summary>Number of words already assembled into an AGC bank.</summary>
+        Public Function BankUsage(logicalBank As Integer) As Integer
+            If logicalBank < 0 OrElse logicalBank >= AgcRopeImage.FixedBankCount Then Return 0
+            Return _usedInBank(logicalBank)
+        End Function
 
         Private Function BankUsed(bank As Integer) As Integer
             If bank < 0 OrElse bank >= AgcRopeImage.FixedBankCount Then Return 0
