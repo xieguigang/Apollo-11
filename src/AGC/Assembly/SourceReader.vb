@@ -189,30 +189,28 @@ Namespace Agc
 
             Dim idx As Integer = 0
             If firstStart = 0 Then
+                ' Only a field that starts in column 1 can be a label.  Every
+                ' other line begins with the operation.
                 line.Label = fields(0)
                 idx = 1
             End If
 
             ' The transcribed sources occasionally indent a label past column 1,
-            ' which hides it from the column rule above.  Find the field that
-            ' really is the operation; anything before it is the label.  A field
-            ' that is itself a known operation is never demoted to a label, so
-            ' "SETLOC 04000" written at column 1 stays a pseudo-op.
-            Dim opIndex As Integer = -1
-            If idx < fields.Count AndAlso Not IsKnownOperator(fields(idx)) Then
-                opIndex = FirstKnownOperatorIndex(fields, idx + 1)
-            End If
-            If opIndex < 0 Then
-                ' No recognised operation on this line; keep the naive layout so
-                ' that the assembler can report the unknown operator.
-                opIndex = idx
-            ElseIf opIndex > idx Then
-                For k As Integer = idx To opIndex - 1
-                    If line.Label = "" Then
-                        line.Label = fields(k)
-                    End If
-                Next
-                idx = opIndex
+            ' which hides it from the column rule above: a line whose first field
+            ' is not an operation may still be "LABEL<T>OP<T>operand".  Find the
+            ' field that really is the operation; anything before it is the label.
+            ' A field that is itself a known operation is never demoted to a label,
+            ' so "SETLOC 04000" written at column 1 stays a pseudo-op.
+            If idx < fields.Count AndAlso IsKnownOperator(fields(idx)) Then
+                ' The field at idx is the operation; leave it in place.
+            Else
+                Dim opIndex As Integer = FirstKnownOperatorIndex(fields, idx)
+                If opIndex >= 0 Then
+                    For k As Integer = idx To opIndex - 1
+                        If line.Label = "" Then line.Label = fields(k)
+                    Next
+                    idx = opIndex
+                End If
             End If
 
             ' Distribute the remaining fields.  These are written as separate
