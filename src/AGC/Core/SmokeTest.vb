@@ -312,7 +312,9 @@ Namespace Agc
                 Check(later = state, "a second forward equate sees the same STATE", later.ToString())
 
                 ' The reference must encode the erasable address, not a constant.
-                Dim encoded As Integer = asm.Image.GetFixed(2, 2048) And AgcWord.Mask12
+                ' "WRD STATE +5" sits in the fixed-fixed pair, whose first word is
+                ' offset 0 of AGC bank 02.
+                Dim encoded As Integer = asm.Image.GetFixed(2, 0) And AgcWord.Mask12
                 Console.WriteLine("  encoded operand = " & AgcWord.ToOctal(encoded))
                 Check(encoded = state + 5, "the use site encodes STATE +5", AgcWord.ToOctal(encoded))
 
@@ -857,9 +859,12 @@ Namespace Agc
                                   " operand=" & AgcWord.ToOctal(dloadOperand) &
                                   " DAD operand=" & AgcWord.ToOctal(dadOperand))
 
-                CheckEqual(dloadOperand, (aAddr.SReg + 1) And AgcWord.Mask15,
+                ' The operand of a DLOAD/DAD-style instruction is a plain 12-bit
+                ' address field, so it carries the flat (pseudo) address of the low
+                ' word -- "02000 + offset" only for a fixed address.
+                CheckEqual(dloadOperand, (aAddr.PseudoValue + 1) And AgcWord.Mask12,
                            "DLOAD operand is the low word of A")
-                CheckEqual(dadOperand, (bAddr.SReg + 1) And AgcWord.Mask15,
+                CheckEqual(dadOperand, (bAddr.PseudoValue + 1) And AgcWord.Mask12,
                            "DAD operand is the low word of B")
                 Check(dloadOpcode <> 0, "DLOAD opcode word is non-zero")
             Finally
