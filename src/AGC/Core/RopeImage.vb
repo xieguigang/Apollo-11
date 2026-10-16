@@ -63,7 +63,7 @@ Namespace Agc
             Dim o As Integer = offset - &H800
             If o < 0 Then o += &H800  ' tolerate raw 0-based offsets
             If bank < 0 OrElse bank >= FixedBankCount OrElse o < 0 OrElse o >= FixedBankWords Then Return
-            Fixed(bank, o) = word And AgcWord.Mask16
+            Fixed(bank, o) = word And AgcWord.Mask17
             FixedUsed(bank, o) = True
             FixedWordCount(bank) += 1
             WrittenCount += 1

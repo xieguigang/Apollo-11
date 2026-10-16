@@ -109,17 +109,18 @@ Namespace Agc
 
         ''' <summary>
         ''' The AGC's instruction word is 16 bits wide (15 data bits plus a parity
-        ''' bit), so an assembled word can carry the opcode's top bit in position
-        ''' 16.  Data words in memory are 15 bits.
+        ''' bit), and the opcode occupies its top three bits, so an assembled
+        ''' instruction needs 17 bits of storage while it is being manipulated.
+        ''' Data words in memory are 15 bits.
         ''' </summary>
-        Public Const Mask16 As Integer = &HFFFF
+        Public Const Mask17 As Integer = &H1FFFF
 
         ''' <summary>Octal text of a word.  Six digits are used by default so that
-        ''' an instruction word's bit 16 is visible.</summary>
+        ''' an instruction word's opcode bits are visible.</summary>
         Public Function ToOctal(word As Integer, Optional digits As Integer = 6) As String
             Dim v As Integer
             If digits >= 6 Then
-                v = word And Mask16
+                v = word And Mask17
             Else
                 v = word And Mask15
             End If

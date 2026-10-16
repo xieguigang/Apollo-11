@@ -387,7 +387,7 @@ Namespace Agc
         Private Sub StoreWordAt(address As AgcAddress, word As Integer)
             ' The AGC instruction word is 16 bits wide (15 data bits plus the
             ' parity bit), so bit 16 must be preserved for the CPU decoder.
-            word = word And AgcWord.Mask16
+            word = word And AgcWord.Mask17
             If address.IsErasable Then
                 Dim sreg As Integer = address.SReg And AgcWord.Mask15
                 Dim bank As Integer

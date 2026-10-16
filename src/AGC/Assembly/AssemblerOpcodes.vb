@@ -89,7 +89,7 @@ Namespace Agc
 
             ' The instruction word is 16 bits wide (15 data bits plus the parity
             ' bit), so the opcode's top bit must be preserved.
-            Dim finalWord As Integer = (opcode Or (value And AgcWord.Mask12)) And AgcWord.Mask16
+            Dim finalWord As Integer = (opcode Or (value And AgcWord.Mask12)) And AgcWord.Mask17
             If _debugEncoding Then
                 Console.WriteLine("ENCODE " & op & " opcode=" & AgcWord.ToOctal(opcode) &
                                   " value=" & AgcWord.ToOctal(value) &

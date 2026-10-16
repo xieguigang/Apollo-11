@@ -65,7 +65,9 @@ Namespace Agc
                 For w As Integer = 0 To 1023
                     Dim v As Integer = 0
                     If b < AgcRopeImage.FixedBankCount Then v = _image.Fixed(b, w)
-                    Fixed(b, w) = v And AgcWord.Mask15
+                    ' Instruction words are 16 bits wide including their top
+                    ' opcode bit, so all 17 working bits are kept.
+                    Fixed(b, w) = v And AgcWord.Mask17
                 Next
             Next
 
@@ -94,7 +96,7 @@ Namespace Agc
             Dim bank As Integer
             Dim offset As Integer
             DecodeFixed(vaddr, bank, offset)
-            Fixed(bank, offset) = value And AgcWord.Mask15
+            Fixed(bank, offset) = value And AgcWord.Mask17
         End Sub
 
         ''' <summary>
