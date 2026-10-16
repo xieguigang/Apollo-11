@@ -340,7 +340,16 @@ Namespace Agc
         ''' <summary>Write word <paramref name="index"/> of a multi-word item at the current location.</summary>
         Private Sub EmitAtCurrent(word As Integer, Optional index As Integer = 0)
             If _pass <> 2 Then Return
-            StoreWordAt(AgcCodec.IncPc(_pc, index), word)
+            Dim target As AgcAddress = AgcCodec.IncPc(_pc, index)
+            If _traceLines > 0 Then
+                _traceLines -= 1
+                Console.WriteLine("EMIT " & AgcWord.ToOctal(word) & " at " & target.ToString() &
+                                  " kind=" & target.Kind.ToString() & " banked=" & target.Banked.ToString() &
+                                  " from " & _currentLine.File.Substring(_currentLine.File.LastIndexOf("\"c) + 1) &
+                                  ":" & _currentLine.LineNumber.ToString() &
+                                  " op=" & _currentLine.Opcode)
+            End If
+            StoreWordAt(target, word)
             _emittedWords += 1
         End Sub
 
