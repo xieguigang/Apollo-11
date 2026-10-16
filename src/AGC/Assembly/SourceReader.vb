@@ -52,8 +52,10 @@ Namespace Agc
 
         Public Sub New(rootDirectory As String, diagnostics As AgcDiagnostics)
             _rootDirectory = rootDirectory
-            Diagnostics = diagnostics
-            _searchPaths.Add(rootDirectory)
+            ' Visual Basic is case insensitive, so "Diagnostics = diagnostics"
+            ' would assign the parameter to itself.  The Me. prefix is required.
+            Me.Diagnostics = diagnostics
+            If Not String.IsNullOrEmpty(rootDirectory) Then _searchPaths.Add(rootDirectory)
         End Sub
 
         Public Sub AddSearchPath(path As String)
@@ -81,9 +83,13 @@ Namespace Agc
             End If
 
             Dim resolved As String = ResolveFile(fileName)
-            If resolved Is Nothing Then
-                Diagnostics.Fatal(fileName, 0, "Source file not found.")
+            If String.IsNullOrEmpty(resolved) Then
+                Diagnostics.Fatal(If(fileName, "<null>"), 0, "Source file not found.")
                 Return
+            End If
+
+            If Diagnostics Is Nothing Then
+                Throw New InvalidOperationException("AgcSourceReader has no diagnostics sink.")
             End If
 
             Dim text As String
@@ -105,7 +111,12 @@ Namespace Agc
                     Dim hash As Integer = inc.IndexOf("#"c)
                     If hash >= 0 Then inc = inc.Substring(0, hash).Trim()
                     If inc.Length > 0 Then
-                        ReadInto(inc, lines, depth + 1, visited)
+                        Try
+                            ReadInto(inc, lines, depth + 1, visited)
+                        Catch ex As Exception
+                            Diagnostics.Fatal(resolved, lineNumber,
+                                              "Failed to include '" & inc & "': " & ex.GetType().Name & ": " & ex.Message)
+                        End Try
                     End If
                     Continue For
                 End If

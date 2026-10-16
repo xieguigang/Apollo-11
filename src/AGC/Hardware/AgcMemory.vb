@@ -97,25 +97,59 @@ Namespace Agc
             Fixed(bank, offset) = value And AgcWord.Mask15
         End Sub
 
+        ''' <summary>
+        ''' The rope-image bank number that a (module, half) pair maps to.  This
+        ''' is the AGC's own numbering, so that the assembler, the rope image and
+        ''' the emulator all agree:
+        '''   module 0  -> banks 00 and 01   (the unswitched super-bank module)
+        '''   module 2  -> banks 02 and 03   (the "fixed-fixed" area)
+        '''   module 1  -> banks 030..033    (the switched super-bank module)
+        '''   modules 3..17 -> banks 04..037
+        ''' </summary>
+        Public Shared Function LogicalBankOf(moduleNumber As Integer, half As Integer) As Integer
+            If moduleNumber = 0 Then Return half
+            If moduleNumber = 2 Then Return 2 + half
+            If moduleNumber = 1 Then Return 24 + half          ' 030, 031
+            If moduleNumber = 3 Then Return 32 + half          ' 032, 033
+            Return (moduleNumber - 3) * 2 + 4 + half
+        End Function
+
+        ''' <summary>
+        ''' Decode a 12-bit fixed-memory address into a rope-image bank and offset,
+        ''' following the Block II bank-selection rules.  The bank number produced
+        ''' is the same one the assembler uses for "BANK n".
+        ''' </summary>
         Private Sub DecodeFixed(vaddr As Integer, ByRef bank As Integer, ByRef offset As Integer)
             Dim sel As Integer = vaddr And &H3FFF
             If sel >= &H2000 Then
-                ' 020000..037777: FBANK or BBANK selected bank.
-                If (vaddr And &H1000) <> 0 Then
-                    ' 030000..037777 uses the BBANK (Fbank[3]) register.
-                    bank = ((Fbank(3) And 7) << 3) Or Fbank(1 + ((sel >> 10) And 1))
+                ' 020000..037777: the bank selected by FBANK or BBANK.  The
+                ' register holds "module/2" in bits 3-5 and the half in bit 2,
+                ' but a rope-image bank number is (module-1)*2 + half for the
+                ' switched modules, so the two agree except for the super-bank
+                ' module, whose banks are numbered 030 upwards.
+                Dim selected As Integer
+                If (sel And &H1000) <> 0 Then
+                    ' 030000..037777 uses BBANK.
+                    selected = ((Fbank(3) >> 5) And 7) * 2 + ((Fbank(4) >> 5) And 1)
                 Else
-                    bank = ((Fbank(0) And 7) << 3) Or Fbank(1 + ((sel >> 10) And 1))
+                    ' 020000..027777 uses FBANK.
+                    selected = ((Fbank(0) >> 5) And 7) * 2 + ((Fbank(1) >> 5) And 1)
                 End If
+                ' The hardware's super-bank flip-flop replaces values in the
+                ' 030..033 range with the module selected by channel 7 bit 9.
+                If selected >= 28 AndAlso selected <= 31 Then
+                    selected = If((Fbank(2) And 2) <> 0, 24, 32) + (selected Mod 2)
+                End If
+                bank = selected
                 offset = sel And &H3FF
             Else
-                ' 04000..07777 maps directly onto banks 02 and 03.
+                ' 04000..07777: module 2, banks 02 and 03.
                 bank = 2 + ((sel >> 10) And 1)
                 offset = sel And &H3FF
             End If
 
             If bank < 0 Then bank = 0
-            If bank > 43 Then bank = bank And 43
+            If bank > AgcRopeImage.FixedBankCount - 1 Then bank = bank Mod AgcRopeImage.FixedBankCount
             If offset < 0 Then offset = 0
             If offset > 1023 Then offset = 1023
         End Sub

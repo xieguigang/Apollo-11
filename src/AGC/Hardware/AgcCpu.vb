@@ -143,7 +143,9 @@ Namespace Agc
 
         Public Sub Reset()
             A = 0 : A16 = 0 : L = 0 : Q = 0
-            Z = &H800              ' 04000: the entry point of every AGC program
+            ' The AGC's fresh start enters the rope at address 04000, which is
+            ' bank 02 of module 2 with the bank registers cleared.
+            Z = &H800
             NextZ = Z
             IndexValue = 0
             ExtraCode = False

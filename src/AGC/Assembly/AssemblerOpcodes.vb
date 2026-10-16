@@ -87,7 +87,18 @@ Namespace Agc
                 value = EncodeOperandValue(line, op, entry, address, opcode, wasExtended)
             End If
 
-            EmitAtCurrent((opcode Or (value And AgcWord.Mask12)) And AgcWord.Mask15)
+            ' The instruction word is 16 bits wide (15 data bits plus the parity
+            ' bit), so the opcode's top bit must be preserved.
+            Dim finalWord As Integer = (opcode Or (value And AgcWord.Mask12)) And AgcWord.Mask16
+            If _debugEncoding Then
+                Console.WriteLine("ENCODE " & op & " opcode=" & AgcWord.ToOctal(opcode) &
+                                  " value=" & AgcWord.ToOctal(value) &
+                                  " addr=" & address.ToString() &
+                                  " kind=" & address.Kind.ToString() &
+                                  " banked=" & address.Banked.ToString() &
+                                  " word=" & AgcWord.ToOctal(finalWord))
+            End If
+            EmitAtCurrent(finalWord)
             Advance(1)
         End Sub
 
@@ -164,9 +175,13 @@ Namespace Agc
                 End If
             End If
 
+            ' The operand field is 12 bits wide.  For the ordinary (banked and
+            ' unswitched-erasable) cases only 10 bits are meaningful, but a
+            ' fixed-fixed address such as 04012 uses all twelve.
+            Dim limit As Integer = If(wasExtended, 8191, 4095)
+
             Dim hasPC As Boolean = (flags And (OperandFlags.QC0 Or OperandFlags.QC1 Or OperandFlags.QC2 Or
                                                OperandFlags.QC3 Or OperandFlags.QCNot0)) <> 0
-            Dim limit As Integer = If(wasExtended, &H1FFF, &H7FF)
 
             If hasPC AndAlso Not wantsAddress Then
                 If (flags And OperandFlags.QCNot0) <> 0 Then
@@ -194,7 +209,9 @@ Namespace Agc
             If i > limit Then
                 ' An address outside the reachable field: keep the low bits but
                 ' report the problem the way the AGC assembler does.
-                Diagnostics.Fatal(line.File, line.LineNumber, "Operand out of range.")
+                Diagnostics.Fatal(line.File, line.LineNumber,
+                                  "Operand out of range: " & op & " " & line.Operand &
+                                  " resolved to " & address.ToString())
             End If
 
             Return i

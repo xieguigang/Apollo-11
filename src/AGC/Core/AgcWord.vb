@@ -107,8 +107,28 @@ Namespace Agc
             Return x
         End Function
 
-        Public Function ToOctal(word As Integer, Optional digits As Integer = 5) As String
-            Return Convert.ToString(word And Mask15, 8).PadLeft(digits, "0"c)
+        ''' <summary>
+        ''' The AGC's instruction word is 16 bits wide (15 data bits plus a parity
+        ''' bit), so an assembled word can carry the opcode's top bit in position
+        ''' 16.  Data words in memory are 15 bits.
+        ''' </summary>
+        Public Const Mask16 As Integer = &HFFFF
+
+        ''' <summary>Octal text of a word.  Six digits are used by default so that
+        ''' an instruction word's bit 16 is visible.</summary>
+        Public Function ToOctal(word As Integer, Optional digits As Integer = 6) As String
+            Dim v As Integer
+            If digits >= 6 Then
+                v = word And Mask16
+            Else
+                v = word And Mask15
+            End If
+            Return Convert.ToString(v, 8).PadLeft(digits, "0"c)
+        End Function
+
+        ''' <summary>Octal text of a 15-bit data word.</summary>
+        Public Function ToOctal15(word As Integer) As String
+            Return Convert.ToString(word And Mask15, 8).PadLeft(5, "0"c)
         End Function
 
         ' ------------------------------------------------------------------

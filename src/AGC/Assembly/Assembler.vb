@@ -44,6 +44,45 @@ Namespace Agc
         Private _ebankOneShot As Boolean
 
         ''' <summary>
+        ''' Resolve an assembler address to the rope-image bank and the AGC bank
+        ''' number used for word accounting.  The rope image uses the AGC's own
+        ''' bank numbering, which is what AgcMemory also decodes to.
+        ''' </summary>
+        Public Shared Sub ResolveBank(address As AgcAddress, ByRef physical As Integer, ByRef logical As Integer)
+            physical = -1
+            logical = -1
+            If Not address.IsFixed OrElse address.Invalid Then Return
+
+            Dim sreg As Integer = address.SReg And AgcWord.Mask15
+            Dim moduleNumber As Integer
+            Dim half As Integer
+
+            If address.Unbanked Then
+                If sreg < 2048 Then Return                       ' not a fixed address
+                If sreg < 4096 Then
+                    ' 04000..07777: banks 02 and 03 of module 2.
+                    moduleNumber = 2
+                    half = (sreg - 2048) \ 1024
+                    logical = 2 + half
+                Else
+                    ' 010000..017777 is module 2, 030000.. is the super-bank module.
+                    Dim rel As Integer = sreg - 4096
+                    moduleNumber = 2 + rel \ 2048
+                    half = (rel Mod 2048) \ 1024
+                    logical = If(moduleNumber = 2, 2 + half, address.FB)
+                End If
+            Else
+                ' Banked: the module comes from the FB field (030..043 are the
+                ' super-bank module) and the half from the 01000 bit of SReg.
+                moduleNumber = If(address.Super, address.FB - 8, address.FB)
+                half = (sreg - 2048) \ 1024
+                logical = address.FB
+            End If
+
+            physical = logical
+        End Sub
+
+        ''' <summary>
         ''' Map an AGC bank number into the index used for the per-bank word
         ''' counters.  Banks 00 and 01 are the two halves of the unswitched
         ''' "fixed-fixed" area and share physical storage with banks 02 and 03:
@@ -65,14 +104,6 @@ Namespace Agc
         ''' the same way.
         ''' </summary>
         Public Shared Function LogicalBank(physicalBank As Integer, offset As Integer) As Integer
-            If physicalBank = 2 Then
-                If offset < 1024 Then Return 0
-                Return 2
-            End If
-            If physicalBank = 3 Then
-                If offset < 1024 Then Return 1
-                Return 3
-            End If
             Return physicalBank
         End Function
 
@@ -129,7 +160,7 @@ Namespace Agc
                 Throw New InvalidOperationException("SourceDirectory must be set.")
             End If
 
-            Dim reader As New AgcSourceReader(SourceDirectory, Diagnostics)
+            Dim reader As New AgcSourceReader(SourceDirectory, Me.Diagnostics)
             _lines = reader.Read(Path.Combine(SourceDirectory, MainFile))
             If _lines.Count = 0 Then
                 Diagnostics.Fatal(MainFile, 0, "No source lines were read.")
@@ -187,6 +218,9 @@ Namespace Agc
         End Sub
 
         Public Property _traceLines As Integer = 0
+
+        ''' <summary>Development aid: print each encoded instruction.</summary>
+        Public Property _debugEncoding As Boolean = False
 
         Private Sub RunPass()
             For Each line As AgcLine In _lines
@@ -351,7 +385,9 @@ Namespace Agc
         End Sub
 
         Private Sub StoreWordAt(address As AgcAddress, word As Integer)
-            word = word And AgcWord.Mask15
+            ' The AGC instruction word is 16 bits wide (15 data bits plus the
+            ' parity bit), so bit 16 must be preserved for the CPU decoder.
+            word = word And AgcWord.Mask16
             If address.IsErasable Then
                 Dim sreg As Integer = address.SReg And AgcWord.Mask15
                 Dim bank As Integer
@@ -369,21 +405,11 @@ Namespace Agc
                 End If
             ElseIf address.IsFixed Then
                 Dim sreg As Integer = address.SReg And AgcWord.Mask15
-                Dim bank As Integer
-                If address.Unbanked Then
-                    ' The unswitched fixed window holds banks 02 and 03.  It is
-                    ' written either as 010000..017777 or as 04000..07777; both
-                    ' forms address the same two banks.
-                    If sreg >= 4096 Then
-                        bank = 2 + (sreg - 4096) \ 1024
-                    Else
-                        bank = 2 + (sreg - 2048) \ 1024
-                    End If
-                Else
-                    bank = address.FB + 8 * If(address.Super, 1, 0)
-                End If
-                If bank >= 0 AndAlso bank < AgcRopeImage.FixedBankCount Then
-                    Image.SetFixed(bank, sreg, word)
+                Dim physical As Integer = -1
+                Dim logical As Integer = -1
+                ResolveBank(address, physical, logical)
+                If physical >= 0 AndAlso physical < AgcRopeImage.FixedBankCount Then
+                    Image.SetFixed(physical, 2048 + (sreg Mod 1024), word)
                 End If
             End If
         End Sub
@@ -409,25 +435,12 @@ Namespace Agc
         Private Sub CreditWords(address As AgcAddress, count As Integer)
             If Not address.IsFixed OrElse address.Invalid Then Return
             Dim sreg As Integer = address.SReg And AgcWord.Mask15
-            Dim physical As Integer
-            Dim offset As Integer
-            If address.Unbanked Then
-                If sreg >= 4096 Then
-                    physical = 2 + (sreg - 4096) \ 1024
-                    offset = (sreg - 4096) Mod 1024
-                ElseIf sreg >= 2048 Then
-                    physical = 2 + (sreg - 2048) \ 1024
-                    offset = (sreg - 2048) Mod 1024
-                Else
-                    Return
-                End If
-            Else
-                physical = address.FB + 8 * If(address.Super, 1, 0)
-                offset = sreg - 2048
-            End If
-            If physical < 0 OrElse physical >= AgcRopeImage.FixedBankCount Then Return
-            Dim logical As Integer = LogicalBank(physical, offset)
-            Dim used As Integer = (offset Mod 1024) + count
+            Dim physical As Integer = -1
+            Dim logical As Integer = -1
+            ResolveBank(address, physical, logical)
+            If physical < 0 OrElse logical < 0 Then Return
+            If physical >= AgcRopeImage.FixedBankCount Then Return
+            Dim used As Integer = (sreg Mod 1024) + count
             If used < 0 Then used = 0
             If used > AgcRopeImage.FixedBankWords Then used = AgcRopeImage.FixedBankWords
             If used > _usedInBank(logical) Then _usedInBank(logical) = used
