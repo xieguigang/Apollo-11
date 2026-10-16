@@ -103,7 +103,7 @@ Namespace Agc
                     CommandCompare(rest)
                 Case "probe"
                     If rest.Count > 0 Then
-                        DebugProbe.DumpLines(rest(0), New Integer() {32, 34, 36, 37})
+                        DebugProbe.DumpLines(rest(0), New Integer() {32, 34, 36, 37, 92})
                     End If
                 Case "bankdump"
                     CommandBankDump(rest)

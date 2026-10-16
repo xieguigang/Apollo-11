@@ -44,6 +44,37 @@ Namespace Agc
         Private _ebankOneShot As Boolean
 
         ''' <summary>
+        ''' Map an AGC bank number into the index used for the per-bank word
+        ''' counters.  Banks 00 and 01 are the two halves of the unswitched
+        ''' "fixed-fixed" area and share physical storage with banks 02 and 03:
+        ''' "BANK 0" writes 000000..003777 and "BANK 2" writes 010000..013777,
+        ''' but both end up in bank 02 of the rope image.
+        ''' </summary>
+        Public Shared Function PhysicalBank(bank As Integer) As Integer
+            If bank = 0 OrElse bank = 2 Then Return 2
+            If bank = 1 OrElse bank = 3 Then Return 3
+            Return bank
+        End Function
+
+        ''' <summary>
+        ''' The AGC bank number a location counter value belongs to, counting the
+        ''' two independently-allocated regions of banks 02 and 03 separately.
+        ''' </summary>
+        Public Shared Function LogicalBank(physicalBank As Integer, sreg As Integer) As Integer
+            If physicalBank = 2 Then
+                ' 000000..003777 is "BANK 0"; 010000..013777 is "BANK 2".
+                If sreg < 1024 Then Return 0
+                Return 2
+            End If
+            If physicalBank = 3 Then
+                ' 004000..007777 is "BANK 1"; 014000..017777 is "BANK 3".
+                If sreg < 1024 Then Return 1
+                Return 3
+            End If
+            Return physicalBank
+        End Function
+
+        ''' <summary>
         ''' High-water mark of words used in each fixed bank, as in yaYUL's
         ''' UsedInBank[] table.  "BANK n" places the location counter at the
         ''' first unused word, so this must be a maximum, not a running total.
@@ -336,13 +367,13 @@ Namespace Agc
                 Dim sreg As Integer = address.SReg And AgcWord.Mask15
                 Dim bank As Integer
                 If address.Unbanked Then
-                    ' The unswitched fixed window is written 010000..017777 for
-                    ' banks 02 and 03, and 04000..07777 for the same two banks in
-                    ' their "fixed-fixed" guise.
+                    ' The unswitched fixed window holds banks 02 and 03.  It is
+                    ' written either as 010000..017777 or as 04000..07777; both
+                    ' forms address the same two banks.
                     If sreg >= 4096 Then
                         bank = 2 + (sreg - 4096) \ 1024
                     Else
-                        bank = If(sreg < &H1000, 2, 3)
+                        bank = 2 + (sreg - 2048) \ 1024
                     End If
                 Else
                     bank = address.FB + 8 * If(address.Super, 1, 0)
@@ -355,42 +386,13 @@ Namespace Agc
 
         ''' <summary>
         ''' Update the per-bank high-water marks (yaYUL UpdateBankCounts).  The
-        ''' stored value is the number of words in use in the bank, i.e. the
+        ''' stored value is the number of words in use in the AGC bank, i.e. the
         ''' highest offset reached plus one.
         ''' </summary>
         Private Sub UpdateBankCounts()
             Dim pc As AgcAddress = _pc
             If pc.Invalid OrElse Not pc.IsAddress OrElse Not pc.IsFixed OrElse pc.Overflow Then Return
-            Dim count As Integer
-            Dim bank As Integer
-            Dim sreg As Integer = pc.SReg And AgcWord.Mask15
-            If pc.Banked Then
-                count = sreg - &H800 + 1
-                bank = pc.FB + 8 * If(pc.Super, 1, 0)
-            ElseIf pc.Unbanked Then
-                If sreg >= 4096 AndAlso sreg <= 8191 Then
-                    ' Banks 02 and 03, written as 010000..017777.
-                    count = (sreg - 4096) Mod 1024 + 1
-                    bank = 2 + (sreg - 4096) \ 1024
-                ElseIf sreg >= &H800 AndAlso sreg <= &HBFF Then
-                    ' Bank 02 in its fixed-fixed guise: 04000..05777.
-                    count = sreg - &H800 + 1
-                    bank = 2
-                ElseIf sreg >= &HC00 AndAlso sreg <= &HFFF Then
-                    ' Bank 03: 06000..07777.
-                    count = sreg - &HC00 + 1
-                    bank = 3
-                Else
-                    Return
-                End If
-            Else
-                Return
-            End If
-            If count < 0 Then count = 0
-            If count > AgcRopeImage.FixedBankWords Then count = AgcRopeImage.FixedBankWords
-            If bank >= 0 AndAlso bank < AgcRopeImage.FixedBankCount AndAlso count > _usedInBank(bank) Then
-                _usedInBank(bank) = count
-            End If
+            CreditWords(pc, 0)
         End Sub
 
         Private Function BankUsed(bank As Integer) As Integer

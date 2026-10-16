@@ -187,9 +187,11 @@ Namespace Agc
                     Dim bank As Integer = _pc.FB + 8 * If(_pc.Super, 1, 0)
                     _pc.SReg = &H800 + NextFreeInBank(bank)
                 ElseIf _pc.SReg >= 4096 Then
-                    ' Banks 02 and 03 written as 010000..017777.
-                    Dim bank As Integer = 2 + (_pc.SReg - 4096) \ 1024
-                    _pc.SReg = ((_pc.SReg - 4096) \ 1024) * 1024 + 4096 + NextFreeInBank(bank)
+                    If _pc.SReg <= 5119 Then
+                        _pc.SReg = 4096 + NextFreeInBank(2)
+                    Else
+                        _pc.SReg = 5120 + NextFreeInBank(3)
+                    End If
                 ElseIf _pc.SReg >= &H800 AndAlso _pc.SReg <= &HBFF Then
                     ' Bank 02 in its fixed-fixed guise: 04000..05777.
                     _pc.SReg = &H800 + NextFreeInBank(2)
@@ -240,10 +242,16 @@ Namespace Agc
             _pc = a
         End Sub
 
-        ''' <summary>Words already committed to a fixed bank, as a high-water mark.</summary>
+        ''' <summary>
+        ''' Words already committed to a fixed bank, as a high-water mark.  The
+        ''' AGC bank number is mapped onto the physical bank first, because
+        ''' "BANK 0"/"BANK 1" and "BANK 2"/"BANK 3" address the same two banks of
+        ''' the rope image.
+        ''' </summary>
         Private Function NextFreeInBank(bank As Integer) As Integer
-            If bank < 0 OrElse bank >= AgcRopeImage.FixedBankCount Then Return 0
-            Return BankUsed(bank)
+            Dim physical As Integer = AgcAssembler.PhysicalBank(bank)
+            If physical < 0 OrElse physical >= AgcRopeImage.FixedBankCount Then Return 0
+            Return BankUsed(physical)
         End Function
 
         Private Sub PseudoBlock(line As AgcLine)
