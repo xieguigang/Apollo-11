@@ -123,6 +123,12 @@ Namespace Agc
         ''' <summary>Development aid: report the bank registers on every refresh.</summary>
         Public Property BankTrace As Boolean = False
 
+        ''' <summary>Development aid: report the dispatch value for the next N instructions.</summary>
+        Public Property DispatchTrace As Integer = 0
+
+        ''' <summary>Development aid: report which Select Case group each dispatch enters.</summary>
+        Public Property TraceSelect As Boolean = False
+
         ''' <summary>
         ''' The interpretive (Danzig) instruction engine.  When set, a word that no
         ''' basic instruction matches is offered to it; see AgcInterpreter.
@@ -431,6 +437,16 @@ Namespace Agc
             Dim address10 As Integer = instruction And AgcWord.Mask10
             Dim address9 As Integer = instruction And AgcWord.Mask9
 
+            If DispatchTrace > 0 Then
+                DispatchTrace -= 1
+                Console.WriteLine("  DISPATCH Z=" & AgcWord.ToOctal(programCounter) &
+                                  " instr=" & AgcWord.ToOctal(instruction) &
+                                  " dispatch=" & extendedOpcode.ToString() &
+                                  " (0o" & Convert.ToString(extendedOpcode, 8) & ")" &
+                                  " extra=" & extraCode.ToString() &
+                                  " addr12=" & AgcWord.ToOctal(address12))
+            End If
+
             LastInstruction = instruction
             LastOpcode = extendedOpcode
             LastAddress12 = address12
@@ -568,14 +584,10 @@ Namespace Agc
                     End If
 
                 ' ----------------------------------------------------------
-                ' TCF and the 012-017 class
-                '
-                ' The assembler encodes TCF as 020000, which dispatches to 020, so
-                ' the case must cover 020.  It previously read "&HA To &HF", which
-                ' no longer matched anything: the instruction dispatched correctly
-                ' and then fell through, so every TCF in the rope was ignored.
+                ' The 012-017 class (not TCF: TCF dispatches to 020 and is handled
+                ' further down, where the case is labelled with its own range).
                 ' ----------------------------------------------------------
-                Case &H10 To &H17
+                Case &HA To &HF
                     NextZ = address12
                     executedTc = True
 
@@ -763,7 +775,18 @@ Namespace Agc
                         Dim operand16 As Integer = ReadAddress10(address10)
                         A = SignExtend(operand16) And AgcWord.Mask15
                         A16 = 0
+                        If BankTrace Then
+                            Console.WriteLine("      XCH address10=" & address10.ToString() &
+                                              " (RegBBANK=" & RegBBANK.ToString() &
+                                              " RegL=" & RegL.ToString() & ")" &
+                                              " writing " & AgcWord.ToOctal(accumulator))
+                        End If
                         WriteAddress10(address10, accumulator)
+                        If BankTrace Then
+                            Console.WriteLine("      after: erasable(6)=" &
+                                              AgcWord.ToOctal(GetErasable(RegBBANK)) &
+                                              " erasable(1)=" & AgcWord.ToOctal(GetErasable(RegL)))
+                        End If
                         If address10 = RegZ Then NextZ = GetErasable(RegZ)
                     End If
 
@@ -953,6 +976,13 @@ Namespace Agc
                     ExecuteMultiply(address12, accumulator16)
 
                 Case Else
+                    If BankTrace Then
+                        Console.WriteLine("      UNMATCHED Z=" & AgcWord.ToOctal(Z) &
+                                          " dispatch=" & extendedOpcode.ToString() &
+                                          " instr=" & AgcWord.ToOctal(instruction) &
+                                          " qc=" & AgcWord.ToOctal(quarterCode) &
+                                          " addr12=" & AgcWord.ToOctal(address12))
+                    End If
                     ' No basic instruction matches.  The word may select an
                     ' interpretive (Danzig) instruction, which is a virtual machine
                     ' layered on top of the basic set: the instruction word is

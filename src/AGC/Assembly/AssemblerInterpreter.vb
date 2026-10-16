@@ -57,6 +57,13 @@ Namespace Agc
             _interpOperandsPending = 0
             _interpIndex = 0
 
+            ' The STORE family is the only group whose operand word is a store
+            ' code: the assembler stores the complement of the destination plus
+            ' one, which is what makes a store look like an opcode pair to the
+            ' hardware (INTERPRETER.agc, DOSTORE).  ArgType1 is set only on those
+            ' four mnemonics, so it identifies them.
+            _interpIsStore = (entry.ArgType1 = 1)
+            _interpStoreNumber = entry.InterpreterNnnn
             QueueInterpreterOperands(entry)
             If secondEntry IsNot Nothing Then QueueInterpreterOperands(secondEntry)
 
@@ -189,6 +196,15 @@ Namespace Agc
                     encoded = EncodeInterpreterConstant(constantValue, nnnn, switchInc, argType)
                 Else
                     encoded = EncodeInterpreterAddress(resolved, switchInc, argType)
+                End If
+                If _interpIsStore Then
+                    ' A store code is the complement of (destination + 1) with the
+                    ' variant number in bits B12-B14, so the hardware sees a word
+                    ' that looks like an opcode pair.  The destination must be an
+                    ' erasable word for the address field to fit.
+                    Dim dest As Integer = resolved.SReg And &H7FF
+                    Dim code As Integer = (_interpStoreNumber << 11) Or dest
+                    encoded = AgcWord.Mask15 Xor ((code + 1) And AgcWord.Mask15)
                 End If
                 If _debugEncoding Then
                     Console.WriteLine("IOPND op=" & _pass.ToString() & " pc=" & _pc.ToString() &

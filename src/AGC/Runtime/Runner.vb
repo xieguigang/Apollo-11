@@ -70,7 +70,8 @@ Namespace Agc
             End If
             If rest.Contains("--bank-probe") Then
                 machine.Cpu.BankTrace = True
-                machine.Cpu.TraceInitialInstructions = 6
+                machine.Cpu.DispatchTrace = 8
+                machine.Cpu.TraceSelect = True
             End If
             If rest.Contains("--bank-probe-old") Then
                 ' Ground truth for bank selection.  Memory.Fbank is only refreshed at

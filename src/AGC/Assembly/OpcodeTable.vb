@@ -260,7 +260,7 @@ Namespace Agc
             ' that set Q up beforehand.
             AddBasic("TCR", &H0, OperandFlags.Number)                             ' 00
             AddBasic("CCS", &H1000, OperandFlags.QC0 Or OperandFlags.Number)      ' 010
-            AddBasic("TCF", &H2000, OperandFlags.QCNot0)                          ' 020
+            AddBasic("TCF", &H2000, OperandFlags.None)                            ' 020
             AddBasic("DAS", &H2000, OperandFlags.QC0 Or OperandFlags.Plus1)       ' 020
             AddBasic("LXCH", &H2400, OperandFlags.QC2 Or OperandFlags.Number)     ' 022
             AddBasic("INCR", &H2800, OperandFlags.QC2)                            ' 024
@@ -405,10 +405,15 @@ Namespace Agc
             ' argument.  They must be registered here, otherwise the assembler
             ' treats them as unknown and emits a zero word without an operand.
             ' The encoding itself is produced by EncodeInterpreterStore().
-            AddInterp("STORE", &H0, 1, 0, 0, 0, 1)
-            AddInterp("STODL", &H0, 1, 0, 0, 0, 1)
-            AddInterp("STOVL", &H0, 1, 0, 0, 0, 1)
-            AddInterp("STCALL", &H0, 1, 0, 0, 0, 1)
+            ' Argument one is the operand count, argument five is the variant
+            ' number that the assembler places in bits B12-B14 of the store code
+            ' word, and argument seven flags the store family.  The eight variants
+            ' are STORE, STORE,1, STORE,2, STODL, STODL,1, STOVL, STOVL,1 and
+            ' STCALL; a ",1" suffix in the source selects the odd-numbered form.
+            AddInterp("STORE", &H0, 1, 0, 0, 0, 1)      ' variant 0
+            AddInterp("STODL", &H0, 1, 0, 3, 0, 1)      ' variant 3
+            AddInterp("STOVL", &H0, 1, 0, 5, 0, 1)      ' variant 5
+            AddInterp("STCALL", &H0, 1, 0, 7, 0, 1)     ' variant 7
             AddInterp("GOTO", &H56, 1)
             AddInterp("INCR,1", &H36, 1)
             AddInterp("INCR,2", &H32, 1)

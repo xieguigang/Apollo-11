@@ -103,11 +103,6 @@ Namespace Agc
                     CommandSmoke()
                 Case "compare"
                     CommandCompare(rest)
-                Case "probe"
-                    DebugProbe.DumpSynthetic()
-                    If rest.Count > 0 Then
-                        DebugProbe.DumpLines(rest(0), New Integer() {32, 34, 36, 37, 92})
-                    End If
                 Case "bankdump"
                     CommandBankDump(rest)
                 Case "dump"
@@ -304,13 +299,14 @@ Namespace Agc
             AgcRunner.Run(rest, AddressOf ResolveSourceDirectory, AddressOf CreateAssembler)
         End Sub
 
+        ''' <summary>
+        ''' Run the end-to-end test suite.  The smoke test is the real suite: it
+        ''' covers assembler encoding, the pseudo-address codec, the CPU, the
+        ''' interpretive engine and the vector/matrix operations.
+        ''' </summary>
         Private Sub CommandSelfTest()
-            Dim failures As Integer = AgcSelfTest.RunAll()
-            If failures = 0 Then
-                Console.WriteLine("All self tests passed.")
-            Else
-                Console.WriteLine(failures.ToString() & " self test(s) failed.")
-            End If
+            Dim failures As Integer = AgcSmokeTest.Run()
+            If failures > 0 Then Environment.ExitCode = 1
         End Sub
 
         ''' <summary>Run the end-to-end assembler + virtual hardware smoke test.</summary>

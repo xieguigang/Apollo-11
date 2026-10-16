@@ -124,6 +124,12 @@ Namespace Agc
         Private ReadOnly _interpSwitchInvert As New List(Of Integer)()
         Private _interpIndex As Integer
 
+        ' Set while the interpretive instruction being assembled is a member of the
+        ' STORE family, whose operand word is a complemented store code rather than
+        ' a plain address.
+        Private _interpIsStore As Boolean
+        Private _interpStoreNumber As Integer
+
         Private _emittedWords As Integer
 
         ''' <summary>

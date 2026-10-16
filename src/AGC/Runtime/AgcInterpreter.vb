@@ -92,6 +92,26 @@ Namespace Agc
             DotProduct(operand)
         End Sub
 
+        ''' <summary>Run a cross product of MPAC with the vector at the operand.</summary>
+        Public Sub TestCrossProduct(operand As Integer)
+            CrossProduct(operand)
+        End Sub
+
+        ''' <summary>Run a vector projection of the operand onto MPAC.</summary>
+        Public Sub TestVectorProjection(operand As Integer)
+            VectorProjection(operand)
+        End Sub
+
+        ''' <summary>Read one MPAC vector component, for tests.</summary>
+        Public Function TestMpacComponent(index As Integer) As Integer
+            Return ReadComponent(AddrMpac + index)
+        End Function
+
+        ''' <summary>Read the raw erasable word behind a component, for tests.</summary>
+        Public Function TestRawWord(a As Integer) As Integer
+            Return _memory.ReadErasable(a And AgcWord.Mask12) And AgcWord.Mask15
+        End Function
+
         ''' <summary>Development aid: print each interpretive instruction as it runs.</summary>
         Public Property TraceEnabled As Boolean
 
@@ -270,6 +290,8 @@ Namespace Agc
         ''' single word.  The caller must advance the program counter by exactly this
         ''' many words or it will step over the next instruction.
         ''' </summary>
+        Public Property StoreDebug As Boolean = False
+
         Public Property WordsConsumed As Integer
 
         ''' <summary>
@@ -307,9 +329,27 @@ Namespace Agc
 
             If code < 0 Then Return False
 
+            If StoreDebug Then
+                Console.WriteLine("      EXEC code=" & code.ToString() &
+                                  " operand=0o" & Convert.ToString(operand, 8) &
+                                  " code1=" & code1.ToString() & " code2=" & code2.ToString() &
+                                  " word=0o" & Convert.ToString(word, 8))
+            End If
+
             Dim ok As Boolean = ExecuteCode(code, operand)
             If ok Then
-                WordsConsumed = If(AgcOpcodeTable.InterpretiveTakesOperand(code), 2, 1)
+                If code = 0 Then
+                    ' Code 0 is shared by EXIT and the whole STORE family, so
+                    ' InterpretiveTakesOperand cannot answer for it: whichever of
+                    ' EXIT and STORE is found first decides, and EXIT takes no
+                    ' operand while a store does.  Getting this wrong mis-advances
+                    ' the sequence by a word, which makes the interpretive program
+                    ' walk into its own operands.  A store's operand word is
+                    ' non-zero (it is a complemented store code); EXIT's is zero.
+                    WordsConsumed = If((operand And AgcWord.Mask15) <> 0, 2, 1)
+                Else
+                    WordsConsumed = If(AgcOpcodeTable.InterpretiveTakesOperand(code), 2, 1)
+                End If
             End If
             Return ok
         End Function
@@ -317,6 +357,17 @@ Namespace Agc
         Private Function ExecuteCode(code As Integer, operand As Integer) As Boolean
             Select Case code
                 Case &H0
+                    ' Opcode 0 is shared by EXIT and the whole STORE family.  The
+                    ' interpreter tells them apart the same way the hardware does:
+                    ' a store code is stored complemented so that it looks like a
+                    ' negative word, while EXIT's operand word is zero.
+                    ' (INTERPRETER.agc, "the storecode was stored complemented to
+                    ' make it look like an opcode pair".)
+                    Dim raw As Integer = operand And AgcWord.Mask15
+                    ' A store code is a word the basic assembler would not use as
+                    ' an ordinary address; the engine distinguishes it by being
+                    ' non-zero, since EXIT's operand word is zero.
+                    If raw <> 0 Then Return ExecuteStore(raw)
                     ' EXIT.  The interpretive sequence is finished, so the basic
                     ' program continues at the word after this instruction.  That is
                     ' already where Z points, so nothing has to be moved.
@@ -406,6 +457,16 @@ Namespace Agc
                 Case &H5A                        ' BPL: branch when MPAC >= 0
                     If ReadMpac() >= 0 Then Return GoToAddress(operand)
                     Return True
+
+                Case &H5E                        ' BMN: branch when MPAC < 0
+                    If ReadMpac() < 0 Then Return GoToAddress(operand)
+                    Return True
+
+                Case &H61                        ' VXV: MPAC = MPAC x V (cross product)
+                    Return CrossProduct(operand)
+
+                Case &H65                        ' VPROJ: MPAC = V . MPAC / |MPAC|
+                    Return VectorProjection(operand)
 
                 Case &H29, &H2B                   ' PDDL / PDDL*: push down the operand
                     PushDown(ReadOperand(operand))
@@ -542,6 +603,145 @@ Namespace Agc
             Next
             Return v
         End Function
+
+        ''' <summary>
+        ''' Execute a STORE-family instruction.  The operand word is a store code:
+        ''' the assembler stores the complement of (address + 1), so a negative word
+        ''' means a store.  Bits B12-B14 select the variant and the low eleven bits
+        ''' are the erasable destination, matching the hardware, which masks with
+        ''' B12T14 for the code number and LOW11 for the address.
+        '''
+        ''' The variants are STORE, STORE,1, STORE,2, STODL, STODL,1, STOVL,
+        ''' STOVL,1 and STCALL.  The double-precision stores save MPAC and then
+        ''' replace it from the following word.
+        ''' </summary>
+        Private Function ExecuteStore(storeWord As Integer) As Boolean
+            Dim value As Integer = ((AgcWord.Mask15 Xor storeWord) And MpacWordMask) - 1
+            Dim storeNumber As Integer = (value >> 11) And 7
+            Dim address As Integer = value And &H7FF
+            If TraceEnabled Then
+                Console.WriteLine("      STORE no=" & storeNumber.ToString() &
+                                  " addr=" & AgcWord.ToOctal(address) &
+                                  " (word=" & AgcWord.ToOctal(storeWord) & ")")
+            End If
+
+            Dim scaled As Boolean = (storeNumber And 1) = 1
+
+            Select Case storeNumber
+                Case 0, 1, 2
+                    ' STORE, STORE,1, STORE,2: save MPAC and carry on in the
+                    ' interpretive section.  The ,1 and ,2 forms scale by the
+                    ' combined index registers, which the engine does not model.
+                    WriteMpacTo(address)
+                    Return True
+
+                Case 3, 4
+                    ' STODL, STODL,1: store, then reload MPAC in double precision
+                    ' from the address in the following word.
+                    WriteMpacTo(address)
+                    Dim reload As Integer = ReadOperand(PeekNextOperandWord())
+                    WriteMpac(reload)
+                    Return True
+
+                Case 5, 6
+                    ' STOVL, STOVL,1: store, then reload a vector from the address
+                    ' in the following word.
+                    WriteMpacTo(address)
+                    Dim vecAddr As Integer = PeekNextOperandWord()
+                    Dim v As Integer() = ReadVector(vecAddr)
+                    WriteMpacVector(v)
+                    Return True
+
+                Case 7
+                    ' STCALL: store MPAC.  QPRET is not modelled yet, so the call
+                    ' itself is not performed; the store still happens, which is the
+                    ' observable effect the flight software depends on.
+                    WriteMpacTo(address)
+                    Return True
+            End Select
+
+            Return True
+        End Function
+
+        ''' <summary>
+        ''' Write the 28-bit MPAC into two consecutive erasable words.  MPAC is a
+        ''' one's-complement pair, so each 14-bit half is written independently,
+        ''' which is what the hardware does.
+        ''' </summary>
+        Private Sub WriteMpacTo(address As Integer)
+            Dim rawHi As Integer = ReadErasable(AddrMpac)
+            Dim rawLo As Integer = ReadErasable(AddrMpacLow)
+            WriteOperand(address, rawHi)
+            WriteOperand(address + 1, rawLo)
+        End Sub
+
+        ''' <summary>
+        ''' The operand word that follows the current instruction, as the hardware
+        ''' would see it.  STODL and STOVL take their reload address from here.
+        ''' </summary>
+        Private Function PeekNextOperandWord() As Integer
+            Dim at As Integer = (_cpu.Z + 1) And AgcWord.Mask12
+            Return ReadErasable(at)
+        End Function
+
+        ''' <summary>
+        ''' MPAC = MPAC x V, the cross product.  Components are fractions, so each
+        ''' product is divided by 040000.  The result is built word by word because
+        ''' the left operand is the vector already in MPAC.
+        ''' </summary>
+        Private Function CrossProduct(operand As Integer) As Boolean
+            Dim a As Integer() = ReadVector(AddrMpac)
+            Dim b As Integer() = ReadVector(operand)
+            Dim result(VectorComponents - 1) As Integer
+            ' x = a1*b2 - a2*b1, y = a2*b0 - a0*b2, z = a0*b1 - a1*b0
+            result(0) = CInt((CLng(a(1)) * CLng(b(2)) - CLng(a(2)) * CLng(b(1))) >> 14)
+            result(1) = CInt((CLng(a(2)) * CLng(b(0)) - CLng(a(0)) * CLng(b(2))) >> 14)
+            result(2) = CInt((CLng(a(0)) * CLng(b(1)) - CLng(a(1)) * CLng(b(0))) >> 14)
+            WriteMpacVector(result)
+            Return True
+        End Function
+
+        ''' <summary>
+        ''' VPROJ: MPAC = (V . MPAC / |MPAC|) * (MPAC / |MPAC|).  The vector in the
+        ''' operand is projected onto the unit vector in the direction of MPAC.
+        ''' </summary>
+        Private Function VectorProjection(operand As Integer) As Boolean
+            Dim u As Integer() = ReadVector(AddrMpac)
+            Dim v As Integer() = ReadVector(operand)
+
+            Dim magSq As Long = 0
+            For i As Integer = 0 To VectorComponents - 1
+                magSq += CLng(u(i)) * CLng(u(i))
+            Next
+            If magSq = 0 Then Return True
+
+            ' |MPAC|, as a fraction comparable with the components.
+            Dim mag As Long = CLng(Math.Sqrt(CDbl(magSq)))
+            If mag = 0 Then Return True
+
+            Dim dot As Long = 0
+            For i As Integer = 0 To VectorComponents - 1
+                dot += CLng(v(i)) * CLng(u(i))
+            Next
+
+            ' scale = (V . u) / |MPAC|^2, so result = scale * u reproduces the
+            ' projection without ever forming the unit vector explicitly.
+            Dim result(VectorComponents - 1) As Integer
+            For i As Integer = 0 To VectorComponents - 1
+                result(i) = CInt((dot * CLng(u(i))) \ magSq)
+            Next
+            WriteMpacVector(result)
+            Return True
+        End Function
+
+        ''' <summary>Write three 15-bit components into MPAC, most significant first.</summary>
+        Private Sub WriteMpacVector(components As Integer())
+            WriteMpac(0)
+            For i As Integer = 0 To VectorComponents - 1
+                Dim w As Integer = components(i) And AgcWord.Mask15
+                WriteOperand(AddrMpac + i, w)
+            Next
+        End Sub
 
         ''' <summary>
         ''' MPAC = the matrix at the top of the push-down list times the vector at
