@@ -228,7 +228,8 @@ Namespace Agc
         ''' <summary>True when the text names an operation, pseudo-op or alias.</summary>
         Public Shared Function IsKnownOperator(text As String) As Boolean
             If String.IsNullOrEmpty(text) Then Return False
-            If AgcOpcodeTable.IsInterpretive(text) Then Return True
+            Dim interp As AgcOpcode = Nothing
+            If AgcOpcodeTable.TryGetInterpretive(text, interp) Then Return True
             Dim o As AgcOpcode = Nothing
             If AgcOpcodeTable.TryGetBasic(text, o) Then Return True
             Return IsPseudoOpName(text)
