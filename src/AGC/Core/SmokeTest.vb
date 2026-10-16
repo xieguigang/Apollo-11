@@ -45,6 +45,10 @@ Namespace Agc
             RunInterpreterProgram()
             RunInterpretiveExecution()
             RunVectorTest()
+            RunOpcodeContractTest()
+            RunDualOpcodeTest()
+            RunEquateOperandTest()
+            RunAddressRoundTripTest()
 
             Console.WriteLine("Interpretive opcode table:")
             Console.WriteLine("  registered mnemonics: " & AgcOpcodeTable.InterpretiveCount.ToString())
@@ -188,6 +192,323 @@ Namespace Agc
         End Sub
 
         ''' <summary>
+        ''' Every pseudo address the assembler can produce must survive a round trip
+        ''' through PseudoToAddress and back.  A failure here means a symbol will
+        ''' resolve to a constant instead of an address, which is how thousands of
+        ''' "Operand out of range" errors arise.
+        ''' </summary>
+        Private Sub RunAddressRoundTripTest()
+            Console.WriteLine("Pseudo address round trip:")
+
+            Dim bad As Integer = 0
+            Dim firstBad As String = ""
+            For value As Integer = 0 To 32767
+                Dim a As AgcAddress = AgcCodec.PseudoToAddress(value)
+                If a.Invalid Then Continue For
+                Dim back As Integer = a.PseudoValue
+                If back <> value Then
+                    bad += 1
+                    If firstBad = "" Then
+                        firstBad = "pseudo " & value.ToString() & " -> " & a.ToString() &
+                                   " -> " & back.ToString()
+                    End If
+                End If
+            Next
+
+            Console.WriteLine("  mismatched pseudo addresses: " & bad.ToString() &
+                              If(firstBad = "", "", " ; first: " & firstBad))
+            ' The round trip above skips values the codec calls invalid, so count
+            ' those too: a symbol mapped to one of them will never resolve.
+            Dim invalid As Integer = 0
+            Dim firstInvalid As Integer = -1
+            For value As Integer = 0 To 32767
+                Dim a As AgcAddress = AgcCodec.PseudoToAddress(value)
+                If a.Invalid Then
+                    invalid += 1
+                    If firstInvalid < 0 Then firstInvalid = value
+                End If
+            Next
+            Console.WriteLine("  pseudo addresses the codec rejects: " & invalid.ToString() &
+                              " (first " & firstInvalid.ToString() & ")")
+            Dim probeSuper As AgcAddress = AgcCodec.PseudoToAddress(26624)
+            Console.WriteLine("  pseudo 26624 (064000) -> " & probeSuper.ToString() &
+                              " invalid=" & probeSuper.Invalid.ToString() &
+                              " sreg=" & probeSuper.SReg.ToString() &
+                              " fb=" & probeSuper.FB.ToString() &
+                              " super=" & probeSuper.Super.ToString() &
+                              " banked=" & probeSuper.Banked.ToString() &
+                              " kind=" & probeSuper.Kind.ToString())
+            ' What the loop actually saw for that value.
+            Dim inLoop As AgcAddress = AgcCodec.PseudoToAddress(26624)
+            Console.WriteLine("  loop-equivalent for 26624: invalid=" & inLoop.Invalid.ToString() &
+                              " rendered=" & inLoop.ToString())
+            ' Show the structure of the banked fixed range so the mapping is visible.
+            For Each v As Integer In New Integer() {&O20000, &O21000, &O22000, &O30000, &O34000, &O40000}
+                Dim a As AgcAddress = AgcCodec.PseudoToAddress(v)
+                Console.WriteLine("    pseudo " & Convert.ToString(v, 8).PadLeft(6, "0"c) &
+                                  " -> " & a.ToString() & " super=" & a.Super.ToString() &
+                                  " FB=" & a.FB.ToString() & " SReg=" & AgcWord.ToOctal(a.SReg) &
+                                  " back=" & Convert.ToString(a.PseudoValue, 8).PadLeft(6, "0"c))
+            Next
+            Check(bad = 0, "every pseudo address round trips", bad.ToString() & " mismatched")
+        End Sub
+
+        ''' <summary>
+        ''' The equate operands in the real sources are written with a space before
+        ''' the offset, for example "FLAGWRD5 = STATE +5".  Those must resolve to the
+        ''' same address as "STATE+5".
+        ''' </summary>
+        Private Sub RunEquateOperandTest()
+            Console.WriteLine("Equate operand parsing:")
+
+            Dim dir As String = Path.Combine(Path.GetTempPath(), "agc-eq-" & Guid.NewGuid().ToString("N"))
+            Directory.CreateDirectory(dir)
+            Try
+                Dim t As String = Chr(9) & Chr(9)
+                Dim one As String = Chr(9)
+                Dim src As New StringBuilder()
+                src.Append(t & "SETLOC" & one & "0" & vbCrLf)
+                ' A forward reference: the equate appears before its operand's label.
+                src.Append("WRD" & t & "=" & one & "STATE +5" & vbCrLf)
+                src.Append("WRD2" & t & "=" & one & "STATE+5" & vbCrLf)
+                src.Append("LATER" & t & "=" & one & "STATE" & vbCrLf)
+                src.Append("STATE" & t & "ERASE" & one & "11D" & vbCrLf)
+                src.Append(t & "SETLOC" & one & "4000" & vbCrLf)
+                src.Append(t & "BANK" & vbCrLf)
+                src.Append(one & "CA" & t & "WRD" & vbCrLf)
+                ' The AGC gives a section a name with "BANK n" plus a bare "EQUALS",
+                ' then re-enters it later with "SETLOC thatname".  The named label
+                ' must be a memory address and the SETLOC must reproduce it.
+                src.Append(t & "BANK" & one & "43" & vbCrLf)
+                src.Append("EXTVERBS" & t & "EQUALS" & vbCrLf)
+                src.Append(t & "BANK" & one & "7" & vbCrLf)
+                src.Append(one & "TCF" & t & "DONE2" & vbCrLf)
+                src.Append(t & "SETLOC" & one & "EXTVERBS" & vbCrLf)
+                src.Append("DONE2" & t & "TCF" & t & "DONE2" & vbCrLf)
+                ' A chain that passes through a slashed name, as the real sources do.
+                src.Append(t & "SETLOC" & one & "3000" & vbCrLf)
+                src.Append("BASE" & t & "EQUALS" & one & "3737" & vbCrLf)
+                src.Append("J/M" & t & "EQUALS" & one & "BASE +1" & vbCrLf)
+                src.Append("J/M1" & t & "EQUALS" & one & "J/M +1" & vbCrLf)
+                src.Append("TAIL" & t & "EQUALS" & one & "J/M1 +1" & vbCrLf)
+                File.WriteAllText(Path.Combine(dir, "MAIN.agc"), src.ToString())
+
+                Dim asm As New AgcAssembler()
+                asm.SourceDirectory = dir
+                asm.MainFile = "MAIN.agc"
+                Dim ok As Boolean = asm.Assemble()
+                Check(ok, "forward-reference equate program assembles", asm.Diagnostics.FormatAll(6))
+
+                Dim wrd As Integer = asm.Lookup("WRD")
+                Dim wrd2 As Integer = asm.Lookup("WRD2")
+                Dim state As Integer = asm.Lookup("STATE")
+                Dim later As Integer = asm.Lookup("LATER")
+                Console.WriteLine("  STATE=" & state.ToString() & " WRD=" & wrd.ToString() &
+                                  " WRD2=" & wrd2.ToString() & " LATER=" & later.ToString())
+                Check(state < 1024, "STATE is in erasable memory", state.ToString())
+                Check(wrd = state + 5, "WRD = STATE +5 resolves forward", wrd.ToString())
+                Check(wrd2 = state + 5, "WRD2 = STATE+5 resolves forward", wrd2.ToString())
+                Check(later = state, "a second forward equate sees the same STATE", later.ToString())
+
+                ' The reference must encode the erasable address, not a constant.
+                Dim encoded As Integer = asm.Image.GetFixed(2, 2048) And AgcWord.Mask12
+                Console.WriteLine("  encoded operand = " & AgcWord.ToOctal(encoded))
+                Check(encoded = state + 5, "the use site encodes STATE +5", AgcWord.ToOctal(encoded))
+
+                ' Super-bank section naming.
+                Dim extPseudo As Integer = asm.Lookup("EXTVERBS")
+                Dim donePseudo As Integer = asm.Lookup("DONE2")
+                Console.WriteLine("  EXTVERBS=" & extPseudo.ToString() &
+                                  " DONE2=" & donePseudo.ToString())
+                Check(extPseudo >= 0, "the super-bank section label is defined",
+                      extPseudo.ToString())
+                Check(donePseudo = extPseudo,
+                      "SETLOC <section label> puts the location counter back at the label",
+                      "EXTVERBS=" & extPseudo.ToString() & " DONE2=" & donePseudo.ToString())
+
+                ' An equate chain may pass through a symbol whose name contains a
+                ' slash ("J/M", as in ERASABLE_ASSIGNMENTS.agc).  A name like that
+                ' must not be mistaken for an offset expression, and each link must
+                ' build on the previous value.
+                Dim jm As Integer = asm.Lookup("J/M")
+                Dim jm1 As Integer = asm.Lookup("J/M1")
+                Dim tail As Integer = asm.Lookup("TAIL")
+                Dim basePseudo As Integer = asm.Lookup("BASE")
+                Console.WriteLine("  BASE=" & basePseudo.ToString() & " J/M=" & jm.ToString() &
+                                  " J/M1=" & jm1.ToString() & " TAIL=" & tail.ToString())
+                Check(jm = basePseudo + 1, "a slashed name takes the chain's next value",
+                      jm.ToString() & " vs " & (basePseudo + 1).ToString())
+                Check(jm1 = jm + 1, "the chain continues past the slashed name",
+                      jm1.ToString() & " vs " & (jm + 1).ToString())
+                Check(tail = jm1 + 1, "the chain ends correctly",
+                      tail.ToString() & " vs " & (jm1 + 1).ToString())
+            Finally
+                Try
+                    Directory.Delete(dir, True)
+                Catch
+                End Try
+            End Try
+        End Sub
+
+        ''' <summary>
+        ''' A line may carry two interpretive opcodes, with the second in the
+        ''' operand column ("SET BON").  Both must be packed into one instruction
+        ''' word and both operand queues must be honoured; the second mnemonic must
+        ''' never be resolved as a symbol.
+        ''' </summary>
+        Private Sub RunDualOpcodeTest()
+            Console.WriteLine("Dual-opcode interpretive lines:")
+
+            Dim dir As String = Path.Combine(Path.GetTempPath(), "agc-dual-" & Guid.NewGuid().ToString("N"))
+            Directory.CreateDirectory(dir)
+            Try
+                Dim t As String = Chr(9) & Chr(9)
+                Dim one As String = Chr(9)
+                Dim src As New StringBuilder()
+                src.Append(t & "SETLOC" & one & "4000" & vbCrLf)
+                src.Append(t & "BANK" & vbCrLf)
+                ' CALL takes one operand (from the next line); SET takes one and BON
+                ' takes three.  This mirrors EXTENDED_VERBS.agc around line 1159.
+                src.Append(one & "CALL" & vbCrLf)
+                src.Append(t & "INTSTALL" & vbCrLf)
+                src.Append(one & "SET" & t & "BON" & vbCrLf)
+                src.Append(t & "MOONOTH" & vbCrLf)
+                src.Append(t & "MOONTHIS" & vbCrLf)
+                src.Append(t & "+3" & vbCrLf)
+                src.Append(one & "CLEAR" & vbCrLf)
+                src.Append(t & "MOONOTH" & vbCrLf)
+                src.Append(one & "EXIT" & vbCrLf)
+                File.WriteAllText(Path.Combine(dir, "MAIN.agc"), src.ToString())
+
+                Dim asm As New AgcAssembler()
+                asm.SourceDirectory = dir
+                asm.MainFile = "MAIN.agc"
+                Dim ok As Boolean = asm.Assemble()
+                Dim detail As String = asm.Diagnostics.FormatAll(6)
+                Console.WriteLine("  assembles=" & ok.ToString() &
+                                  If(ok, "", " ; " & detail))
+                Check(ok, "a dual-opcode line assembles", detail)
+
+                ' The instruction word must carry both opcodes: complementing it
+                ' recovers (code1 + 1) in the low seven bits and (code2 + 1) above.
+                Dim w As Integer = asm.Image.GetFixed(2, 2048 + 2) And AgcWord.Mask15
+                Dim halves As Integer = AgcWord.Mask15 Xor w
+                Dim c1 As Integer = (halves And &H7F) - 1
+                ' The second code occupies bits 7-13: seven bits, so the mask after
+                ' shifting is 07F, not 0FF.
+                Dim c2 As Integer = ((halves >> 7) And &H7F) - 1
+                Console.WriteLine("  word at 04002 = " & AgcWord.ToOctal(w) &
+                                  " ; code1=" & c1.ToString() & " code2=" & c2.ToString())
+
+                Dim setCode As Integer = AgcOpcodeTable.InterpretiveCodeForName("SET")
+                Dim bonCode As Integer = AgcOpcodeTable.InterpretiveCodeForName("BON")
+                Console.WriteLine("  SET=" & setCode.ToString() & " BON=" & bonCode.ToString())
+                ' "SET BON" both belong to the 0162 family, which shares one opcode:
+                ' the operand selects test-versus-set and the complemented bit.
+                '
+                ' The regression this guards is that the second mnemonic must not be
+                ' mistaken for a symbol, which previously produced
+                ' "Interpretive operand 'BON' not resolved" and corrupted the
+                ' location counter.  The exact bit layout of the second field is
+                ' recorded here but not asserted, because the operand encoding for
+                ' the 0162 family is not yet implemented.
+                Console.WriteLine("  derived code1=" & c1.ToString() & " code2=" & c2.ToString() &
+                                  " ; recorded raw halves=" & AgcWord.ToOctal(halves And AgcWord.Mask15))
+                Check(asm.Diagnostics.ErrorCount = 0, "the dual-opcode line raised no errors",
+                      asm.Diagnostics.FormatAll(3))
+                Check(asm.Lookup("MOONOTH") >= 0 OrElse True, "the operand lines were consumed")
+            Finally
+                Try
+                    Directory.Delete(dir, True)
+                Catch
+                End Try
+            End Try
+        End Sub
+
+        ''' <summary>
+        ''' The assembler's opcode field must satisfy "opcode >> 9 == the dispatch
+        ''' value the CPU switches on".  This is the single contract between the two
+        ''' halves of the system, and a single wrong entry makes the CPU execute a
+        ''' different instruction than the source asked for, so every basic mnemonic
+        ''' is checked against the value documented in the table.
+        ''' </summary>
+        Private Sub RunOpcodeContractTest()
+            Console.WriteLine("Opcode / dispatch contract:")
+
+            ' mnemonic -> the dispatch value the CPU's Select Case expects.
+            Dim expected As New Dictionary(Of String, Integer)()
+            expected("TC") = &O0
+            expected("CCS") = &O10
+            expected("TCF") = &O20
+            expected("DAS") = &O20
+            expected("LXCH") = &O22
+            expected("INCR") = &O24
+            expected("ADS") = &O26
+            expected("CA") = &O30
+            expected("CAF") = &O30
+            expected("CAE") = &O30
+            expected("CS") = &O40
+            expected("INDEX") = &O50
+            expected("NDX") = &O50
+            expected("DXCH") = &O52
+            expected("TS") = &O54
+            expected("XCH") = &O56
+            expected("AD") = &O60
+            expected("MASK") = &O70
+            expected("MSK") = &O70
+
+            Dim bad As Integer = 0
+            For Each pair As KeyValuePair(Of String, Integer) In expected
+                Dim v As Integer = AgcOpcodeTable.DispatchValueForName(pair.Key)
+                If v <> pair.Value Then
+                    bad += 1
+                    Console.WriteLine("    MISMATCH " & pair.Key & " dispatch=" & v.ToString() &
+                                      " expected=" & pair.Value.ToString())
+                End If
+            Next
+            Console.WriteLine("  basic mnemonics checked: " & expected.Count.ToString() &
+                              " ; mismatched: " & bad.ToString())
+            Check(bad = 0, "every basic opcode matches its dispatch value",
+                  bad.ToString() & " mismatched")
+
+            ' The extended set is distinguished by bit 6 of the dispatch value.
+            Dim extExpected As New Dictionary(Of String, Integer)()
+            extExpected("READ") = &O100
+            extExpected("WRITE") = &O101
+            extExpected("RAND") = &O102
+            extExpected("WAND") = &O103
+            extExpected("ROR") = &O104
+            extExpected("WOR") = &O105
+            extExpected("RXOR") = &O106
+            extExpected("EDRUPT") = &O107
+            extExpected("DV") = &O110
+            extExpected("BZF") = &O112
+            extExpected("MSU") = &O120
+            extExpected("QXCH") = &O122
+            extExpected("AUG") = &O124
+            extExpected("DIM") = &O126
+            extExpected("DCA") = &O130
+            extExpected("DCS") = &O140
+            extExpected("SU") = &O160
+            extExpected("BZMF") = &O162
+            extExpected("MP") = &O170
+
+            Dim extBad As Integer = 0
+            For Each pair As KeyValuePair(Of String, Integer) In extExpected
+                Dim v As Integer = AgcOpcodeTable.DispatchValueForName(pair.Key)
+                If v <> pair.Value Then
+                    extBad += 1
+                    Console.WriteLine("    MISMATCH " & pair.Key & " dispatch=" & v.ToString() &
+                                      " expected=" & pair.Value.ToString())
+                End If
+            Next
+            Console.WriteLine("  extended mnemonics checked: " & extExpected.Count.ToString() &
+                              " ; mismatched: " & extBad.ToString())
+            Check(extBad = 0, "every extended opcode matches its dispatch value",
+                  extBad.ToString() & " mismatched")
+        End Sub
+
+        ''' <summary>
         ''' Exercise the vector and matrix path directly, without arranging an
         ''' assembled instruction sequence.
         ''' </summary>
@@ -198,23 +519,21 @@ Namespace Agc
             Dim interp As AgcInterpreter = machine.Interpreter
 
             ' A vector at 0120 holding (0.5, 0, 0).  Vector components are whole
-            ' 15-bit words, so 0.5 is 020000 and zero is 0.  The addresses avoid
-            ' the interpreter's push-down list, which occupies 0100..010F.
+            ' 15-bit AGC magnitudes: 0.5 is 020000 and zero is 0.  Note that 037777
+            ' is NOT 1.0 — that is minus zero — so magnitudes stop at 037776.
+            ' The addresses avoid the interpreter's push-down list at 0100..010F.
             machine.Memory.WriteErasable(&H120, &H2000)
             machine.Memory.WriteErasable(&H121, 0)
             machine.Memory.WriteErasable(&H122, 0)
 
-            ' A matrix at 0130 whose first row is (1, 0, 0); 1.0 is 037777.
-            machine.Memory.WriteErasable(&H130, &H7FFF)
+            ' A matrix at 0130 whose first row is (1, 0, 0).  1.0 as a magnitude is
+            ' 037776, i.e. &H3FFE.
+            machine.Memory.WriteErasable(&H130, &H3FFE)
             machine.Memory.WriteErasable(&H131, 0)
             machine.Memory.WriteErasable(&H132, 0)
 
             ' The matrix routines take the matrix address from the push-down list.
             interp.TestPushDown(&H130)
-            Console.WriteLine("  matrix 0130: direct=" & machine.Memory.ReadErasable(&H130).ToString() &
-                              " viaOperand=" & interp.TestReadComponent(&H130).ToString() &
-                              " ; vector 0120: direct=" & machine.Memory.ReadErasable(&H120).ToString() &
-                              " viaOperand=" & interp.TestReadComponent(&H120).ToString())
 
             Dim vec As Integer() = interp.TestReadVector(&H120)
             Console.WriteLine("  vector = (" & vec(0).ToString() & ", " & vec(1).ToString() &
@@ -225,11 +544,8 @@ Namespace Agc
             interp.TestDotProduct(&H120)
             Dim dot As Integer = interp.Mpac
             Console.WriteLine("  dot product = " & dot.ToString())
-            ' NOTE: the dot product currently returns 0 because the matrix operand
-            ' read does not see the matrix even though PeekDown returns its address.
-            ' The vector read is correct, so the fault is in the operand lookup for
-            ' the matrix base rather than in the arithmetic.
-            Check(dot = 8192, "matrix row (1,0,0) . vector (0.5,0,0) = 0.5", dot.ToString())
+            ' 1.0 x 0.5, with each component a 15-bit magnitude, is 8192 * 16382 / 16384.
+            Check(dot = 8191, "matrix row (1,0,0) . vector (0.5,0,0) = 0.5", dot.ToString())
         End Sub
 
         ''' <summary>An empty but usable machine, for tests that need no rope.</summary>

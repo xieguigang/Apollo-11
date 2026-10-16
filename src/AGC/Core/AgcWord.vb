@@ -132,6 +132,18 @@ Namespace Agc
             Return Convert.ToString(word And Mask15, 8).PadLeft(5, "0"c)
         End Function
 
+        ''' <summary>
+        ''' True when the text contains a decimal digit.  Used to tell a bare
+        ''' symbolic label from a numeric field.
+        ''' </summary>
+        Public Function ContainsDigit(text As String) As Boolean
+            If String.IsNullOrEmpty(text) Then Return False
+            For Each c As Char In text
+                If c >= "0"c AndAlso c <= "9"c Then Return True
+            Next
+            Return False
+        End Function
+
         ' ------------------------------------------------------------------
         ' Bit helpers
         '

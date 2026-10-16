@@ -183,27 +183,15 @@ Namespace Agc
             Dim hasPC As Boolean = (flags And (OperandFlags.QC0 Or OperandFlags.QC1 Or OperandFlags.QC2 Or
                                                OperandFlags.QC3 Or OperandFlags.QCNot0)) <> 0
 
-            If hasPC AndAlso Not wantsAddress Then
-                If (flags And OperandFlags.QCNot0) <> 0 Then
-                    If (i And &HE00) = 0 Then
-                        Diagnostics.Fatal(line.File, line.LineNumber, "Operand out of range.")
-                    End If
-                Else
-                    Dim qc As Integer
-                    If (flags And OperandFlags.QC1) <> 0 Then
-                        qc = &H200
-                    ElseIf (flags And OperandFlags.QC2) <> 0 Then
-                        qc = &H400
-                    ElseIf (flags And OperandFlags.QC3) <> 0 Then
-                        qc = &H600
-                    Else
-                        qc = 0
-                    End If
-                    Dim opQC As Integer = opcode And &HE00
-                    If (i And &HE00) <> 0 AndAlso (i And &HE00) <> opQC Then
-                        Diagnostics.Fatal(line.File, line.LineNumber, "Operand out of range.")
-                    End If
-                End If
+            ' The quarter code belongs to the instruction itself, not to its target:
+            ' a TCF with quarter code 0 branches perfectly well to an operand in the
+            ' 02000..07777 range, and a CAF may name any address.  Requiring the
+            ' operand's top address bits to reproduce the opcode's quarter code
+            ' rejected a very large number of legitimate references, so the operand
+            ' is checked only against the width of its address field.
+            Dim unusedQC As Boolean = hasPC AndAlso Not wantsAddress
+            If unusedQC Then
+                ' No additional restriction: the 12-bit field is the only limit.
             End If
 
             If i > limit Then
@@ -242,7 +230,15 @@ Namespace Agc
                     Else
                         value = a.SReg And AgcWord.Mask15
                     End If
+                    ' The index field is 10 bits.  For a banked-erasable operand the
+                    ' E-bank is selected separately at run time, so the field carries
+                    ' only the offset within the bank; taking the whole sub-address
+                    ' would reject every index in a switched-erasable section, which
+                    ' the AGC sources use freely.
                     Dim limit As Integer = If(wasExtended, &HFFF, &H3FF)
+                    If a.IsErasable AndAlso a.Banked Then
+                        value = (a.SReg - &H1400) And limit
+                    End If
                     If value > limit Then
                         Diagnostics.Fatal(line.File, line.LineNumber, "Index is out of range.")
                         value = value And limit

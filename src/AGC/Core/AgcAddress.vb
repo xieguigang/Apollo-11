@@ -102,13 +102,22 @@ Namespace Agc
         Public ReadOnly Property PseudoValue As Integer
             Get
                 If Unbanked Then Return SReg
-                If IsErasable Then Return (SReg - 5120) + (256 * EB)      ' SReg-01400 + 0400*EB
+                If IsErasable Then
+                    ' Banked erasable keeps the hardware's 10-bit form, with the
+                    ' E-bank in bits 8-9, so the flat word is just SReg.
+                    Return SReg
+                End If
                 If IsFixed Then
-                    ' Fixed banks 02..037 live at 010000 + bank*02000.
-                    ' The super-bank module (banks 030..043) is written 02000
-                    ' lower, because its banks are numbered 030 and up.
+                    ' Fixed banks 02..037 live at 010000 + bank*02000 in pseudo
+                    ' address terms.  The super-bank module (the AGC banks 030..043)
+                    ' is placed 02000 lower, at 020000..027777, so that it does not
+                    ' collide with the low banks.
+                    '
+                    ' Note the test is on Super, not on "FB >= 24": for a banked
+                    ' address FB holds the AGC bank number (030..043), not the
+                    ' ordinal 24..35, so comparing it against 24 is never true.
                     Dim v As Integer = 4096 + (SReg - 2048) + (1024 * FB)
-                    If Super AndAlso FB >= 24 Then v -= 2048
+                    If Super Then v -= 2048
                     Return v
                 End If
                 Return SReg
@@ -121,7 +130,14 @@ Namespace Agc
         ''' </summary>
         Public ReadOnly Property CadrValue As Integer
             Get
-                Return PseudoValue - 4096
+                ' For a super-bank address the PseudoValue is encoded 02000 below
+                ' the flat form (the super module sits at 020000..027777), so the
+                ' offset has to be added back before the 12-bit bank offset can be
+                ' taken.  Without this the CADR value is 02000 short for every
+                ' symbol in banks 030..043.
+                Dim p As Integer = PseudoValue
+                If Super Then p += 2048
+                Return p And &HFFF
             End Get
         End Property
 

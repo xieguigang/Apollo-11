@@ -117,6 +117,12 @@ Namespace Agc
         ''' <summary>Optional per-instruction trace hook.</summary>
         Public Property Tracer As Action(Of AgcCpu)
 
+        ''' <summary>Development aid: report every Z change for the first N instructions.</summary>
+        Public Property TraceInitialInstructions As Integer = 0
+
+        ''' <summary>Development aid: report the bank registers on every refresh.</summary>
+        Public Property BankTrace As Boolean = False
+
         ''' <summary>
         ''' The interpretive (Danzig) instruction engine.  When set, a word that no
         ''' basic instruction matches is offered to it; see AgcInterpreter.
@@ -428,6 +434,17 @@ Namespace Agc
             LastInstruction = instruction
             LastOpcode = extendedOpcode
             LastAddress12 = address12
+            If TraceInitialInstructions > 0 Then
+                TraceInitialInstructions -= 1
+                Console.WriteLine("  Z=" & AgcWord.ToOctal(programCounter) &
+                                  " instr=" & AgcWord.ToOctal(instruction) &
+                                  " op=" & extendedOpcode.ToString() &
+                                  " addr12=" & AgcWord.ToOctal(address12) &
+                                  " A=" & AgcWord.ToOctal(A) &
+                                  " L=" & AgcWord.ToOctal(L) &
+                                  " Q=" & AgcWord.ToOctal(Q) &
+                                  " nextZ=" & AgcWord.ToOctal(NextZ))
+            End If
             If Tracer IsNot Nothing Then Tracer.Invoke(Me)
 
             Dim accumulator16 As Integer = (A16 << 15) Or (A And AgcWord.Mask15)
@@ -552,9 +569,13 @@ Namespace Agc
 
                 ' ----------------------------------------------------------
                 ' TCF and the 012-017 class
+                '
+                ' The assembler encodes TCF as 020000, which dispatches to 020, so
+                ' the case must cover 020.  It previously read "&HA To &HF", which
+                ' no longer matched anything: the instruction dispatched correctly
+                ' and then fell through, so every TCF in the rope was ignored.
                 ' ----------------------------------------------------------
-                Case &HA To &HF
-                    ' TCF and the 012-017 class
+                Case &H10 To &H17
                     NextZ = address12
                     executedTc = True
 
@@ -1002,6 +1023,12 @@ Namespace Agc
             Memory.EBank = (regEBANK >> 8) And 7
             Memory.Fbank(0) = (regFBANK >> 10) And &H37
             Memory.Fbank(1) = (regBBANK >> 10) And &H37
+            If BankTrace Then
+                Console.WriteLine("    BANKREFRESH fbankReg=" & AgcWord.ToOctal(regFBANK) &
+                                  " (" & regFBANK.ToString() & ") -> Fbank0=" & Memory.Fbank(0).ToString() &
+                                  " ; bbankReg=" & AgcWord.ToOctal(regBBANK) &
+                                  " (" & regBBANK.ToString() & ") -> Fbank1=" & Memory.Fbank(1).ToString())
+            End If
 
             L = SignExtend(OverflowCorrected(L)) And AgcWord.Mask15
 

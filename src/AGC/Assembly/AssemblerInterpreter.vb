@@ -60,14 +60,24 @@ Namespace Agc
             QueueInterpreterOperands(entry)
             If secondEntry IsNot Nothing Then QueueInterpreterOperands(secondEntry)
 
-            If _interpOperandsPending > 0 AndAlso Not String.IsNullOrEmpty(line.Operand) Then
+            ' Take the first operand from this line's operand field.  When a second
+            ' opcode was present, that field held the mnemonic rather than an
+            ' operand, and operandText was cleared above; using line.Operand here
+            ' would try to resolve the mnemonic as a symbol.
+            If _interpOperandsPending > 0 AndAlso Not String.IsNullOrEmpty(operandText) Then
                 Dim synthetic As New AgcLine()
                 synthetic.File = line.File
                 synthetic.LineNumber = line.LineNumber
                 synthetic.Opcode = ""
-                synthetic.Operand = line.Operand
-                synthetic.Mod1 = line.Mod1
-                synthetic.Mod2 = line.Mod2
+                synthetic.Operand = operandText
+                ' The offsets that followed the operand on this line.
+                If secondEntry Is Nothing Then
+                    synthetic.Mod1 = line.Mod1
+                    synthetic.Mod2 = line.Mod2
+                Else
+                    synthetic.Mod1 = ""
+                    synthetic.Mod2 = ""
+                End If
                 ProcessInterpretiveOperandLine(synthetic)
             End If
         End Sub

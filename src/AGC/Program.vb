@@ -180,6 +180,12 @@ Namespace Agc
 
             Dim verbose As Boolean = HasFlag(rest, "--verbose")
             Dim asm As AgcAssembler = CreateAssembler(sourceDir, verbose)
+            If HasFlag(rest, "--resolve-trace") Then asm._debugEncoding = True
+            ' By default repeated identical messages are capped so that the output
+            ' stays readable.  This raises the cap so a survey can see every
+            ' distinct site.
+            If HasFlag(rest, "--all-errors") Then asm.Diagnostics.DuplicateLimit = 100000
+            If HasFlag(rest, "--max-lines") Then asm.Diagnostics.MaxOutputLines = 100000
 
             Console.WriteLine("Assembling " & asm.ProgramName & " from " & sourceDir)
             Dim sw As System.Diagnostics.Stopwatch = System.Diagnostics.Stopwatch.StartNew()
@@ -197,7 +203,7 @@ Namespace Agc
 
             If asm.Diagnostics.Messages.Count > 0 Then
                 Console.WriteLine()
-                Console.WriteLine(asm.Diagnostics.FormatAll(60))
+                Console.WriteLine(asm.Diagnostics.FormatAll())
             End If
 
             Dim outFile As String = ""

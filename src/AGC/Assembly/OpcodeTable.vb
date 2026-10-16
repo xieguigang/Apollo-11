@@ -116,6 +116,13 @@ Namespace Agc
             Return False
         End Function
 
+        ''' <summary>The interpretive opcode for a mnemonic, or -1 when unknown.</summary>
+        Public Function InterpretiveCodeForName(name As String) As Integer
+            Dim op As AgcOpcode = Nothing
+            If _interpretive.TryGetValue(name, op) Then Return op.InterpreterCode
+            Return -1
+        End Function
+
         ''' <summary>
         ''' Every interpretive mnemonic that shares an opcode with another.  The
         ''' encoder packs two opcodes into one word, so collisions are expected for
@@ -246,8 +253,14 @@ Namespace Agc
             ' number shifted left nine places, e.g. CA is case 030 so it encodes as
             ' 030 * 02000 octal = 06000, and "06000 >> 9 & 0177" is 030 again.
             AddBasic("TC", &H0, OperandFlags.Number)                              ' 00
+            ' TCR transfers control with the return address in Q rather than Z.
+            ' The AGC sources use it as an ordinary transfer (56 sites), and it
+            ' assembles to the same basic opcode as TC; the distinction is which
+            ' register holds the return address, which is decided by the software
+            ' that set Q up beforehand.
+            AddBasic("TCR", &H0, OperandFlags.Number)                             ' 00
             AddBasic("CCS", &H1000, OperandFlags.QC0 Or OperandFlags.Number)      ' 010
-            AddBasic("TCF", &H1400, OperandFlags.QCNot0)                          ' 012
+            AddBasic("TCF", &H2000, OperandFlags.QCNot0)                          ' 020
             AddBasic("DAS", &H2000, OperandFlags.QC0 Or OperandFlags.Plus1)       ' 020
             AddBasic("LXCH", &H2400, OperandFlags.QC2 Or OperandFlags.Number)     ' 022
             AddBasic("INCR", &H2800, OperandFlags.QC2)                            ' 024

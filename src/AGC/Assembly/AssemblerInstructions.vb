@@ -343,13 +343,21 @@ Namespace Agc
                 Return
             End If
 
-            Dim name As String = line.Operand
+            ' The sources separate the offset with whitespace, for example
+            ' "FLAGWRD5 = STATE +5", which the reader splits into an operand and a
+            ' modifier field.  They have to be recombined or the offset is lost and
+            ' the equate silently becomes the un-offset address.
+            Dim equateOperand As String = AgcSourceReader.CombineOperandAndOffset(line.Operand, line.Mod1, line.Mod2)
+            Dim name As String = equateOperand
             Dim off As Integer = 0
             Dim numeric As Boolean = False
             Dim a As AgcAddress = ResolveOperand(name, off, numeric)
             If a.Invalid Then
-                Diagnostics.Fatal(line.File, line.LineNumber,
-                                  "Symbol '" & line.Operand & "' undefined.")
+                ' The operand names a symbol that has not been defined yet.  The AGC
+                ' sources rely on this, for example "FLAGWRD5 = STATE +5" appears
+                ' long before "STATE ERASE", so remember the equate and settle it
+                ' once the whole file has been read.
+                DeferEquate(line, equateOperand, isMinus, False)
                 Return
             End If
 

@@ -32,7 +32,11 @@ Namespace Agc
         ''' </summary>
         Public Function PseudoToAddress(value As Integer) As AgcAddress
             Dim a As New AgcAddress()
-            If value < 0 OrElse value > 18431 Then          ' 043777
+            ' The flat pseudo space runs from 000000 to 077777.  The super-bank
+            ' module is placed above the low banks, so usable values extend well
+            ' past 043777; rejecting them here is what turned valid symbol
+            ' references into "resolved to const" errors.
+            If value < 0 OrElse value > AgcWord.Mask15 Then
                 a.Invalid = True
                 Return a
             End If
@@ -43,33 +47,41 @@ Namespace Agc
                 a.Unbanked = True
                 a.SReg = value
             ElseIf value <= ErasableSwitchedLimit Then
-                ' 01400..03777: switched erasable.  This area is five 256-word
-                ' blocks mapping onto E-banks 3..7; the first two blocks of the
-                ' switched window belong to banks 0..2, which are addressed as
-                ' part of the unswitched area.
-                Dim offset As Integer = value - 1024
+                ' 01400..03777: switched erasable.  The hardware encodes the E-bank
+                ' in bits 8-9 of the 10-bit address, so E-bank 2 with low byte 0377
+                ' is 02777.  The assembler keeps the same form in SReg, which is why
+                ' AgcAddress.PseudoValue for banked erasable is (EB << 8) | low byte.
                 a.Kind = AgcMemoryKind.Erasable
                 a.Banked = True
-                a.SReg = 5120 + (offset Mod 256)              ' 01400 + low byte
-                a.EB = 2 + (offset \ 256)
+                a.SReg = value                                   ' E-bank in bits 8-9
+                a.EB = (value >> 8) And 7
             ElseIf value <= FixedUnswitchedLimit Then
                 ' 04000..07777: unswitched fixed (banks 02 and 03).
                 a.Kind = AgcMemoryKind.Fixed
                 a.Unbanked = True
                 a.SReg = value
-            ElseIf value <= 9215 Then                        ' 021777
-                ' 10000..21777: fixed, banked.
+            ElseIf value <= 26623 Then                       ' 063777
+                ' 10000..63777: fixed, banked low banks.  FB is the AGC bank
+                ' number, so bank 02 starts at pseudo 010000 and each bank is 02000
+                ' wide, i.e. 1024 in the flat numbering used here.
                 a.Kind = AgcMemoryKind.Fixed
                 a.Banked = True
                 a.SReg = 2048 + (value Mod 1024)
                 a.FB = (value - 4096) \ 1024
             Else
-                ' 30000..43777: fixed, super banked (banks 030..043).
+                ' 64000..43777: fixed, the super-bank module (AGC banks 030..043).
+                ' Its pseudo address is the low-bank form minus 02000 so that it
+                ' does not collide with the low banks:
+                '
+                '   pseudo = 4096 + (SReg - 2048) + 1024*FB - 2048
+                '
+                ' Substituting FB = n + 24 (n = FB - 030) reduces this to
+                ' pseudo = 1024*n + 26624, so n = (pseudo - 26624) / 1024.
                 a.Kind = AgcMemoryKind.Fixed
                 a.Banked = True
                 a.Super = True
-                a.SReg = 2048 + (value Mod 1024)
-                a.FB = 24 + ((value - SuperBankBase) \ 1024)
+                a.FB = (value - 26624) \ 1024 + 24
+                a.SReg = 2048 + ((value - 1024) Mod 1024)
             End If
             a.SReg = a.SReg And AgcWord.Mask15
             Return a
@@ -102,7 +114,12 @@ Namespace Agc
             ' A plain constant that is small enough becomes unswitched erasable.
             If result.IsConstant Then
                 If result.SReg < 0 Then Return result
-                If result.SReg >= 768 Then Return result          ' 01400
+                If result.SReg >= 768 Then
+                    ' The location counter has drifted into a constant that is too
+                    ' large to be erasable.  That state cannot be assembled, so it is
+                    ' left as-is and reported by the caller.
+                    Return result
+                End If
                 result.IsConstant = False
                 result.Kind = AgcMemoryKind.Erasable
                 result.Unbanked = True

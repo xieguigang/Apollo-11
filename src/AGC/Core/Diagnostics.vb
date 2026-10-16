@@ -101,11 +101,18 @@ Namespace Agc
             Report(AgcSeverity.Fatal, file, line, text)
         End Sub
 
-        Public Function FormatAll(Optional maxLines As Integer = 400) As String
+        ''' <summary>
+        ''' Cap on the number of diagnostic lines FormatAll will produce.  Raised by
+        ''' the --max-lines switch so that an error survey can see every site.
+        ''' </summary>
+        Public Property MaxOutputLines As Integer = 400
+
+        Public Function FormatAll(Optional maxLines As Integer = 0) As String
+            Dim limit As Integer = If(maxLines > 0, maxLines, MaxOutputLines)
             Dim sb As New StringBuilder()
             Dim n As Integer = 0
             For Each m As AgcMessage In _messages
-                If n >= maxLines Then
+                If n >= limit Then
                     sb.AppendLine("... (" & (_messages.Count - n).ToString() & " more messages suppressed)")
                     Exit For
                 End If

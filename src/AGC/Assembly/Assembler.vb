@@ -125,6 +125,27 @@ Namespace Agc
         Private _interpIndex As Integer
 
         Private _emittedWords As Integer
+
+        ''' <summary>
+        ''' An equate whose right-hand side could not be evaluated when the line was
+        ''' reached, because it names a symbol defined further down the file.
+        '''
+        ''' The AGC sources rely on this heavily: ERASABLE_ASSIGNMENTS.agc defines
+        ''' "FLAGWRD5 = STATE +5" more than six hundred lines before "STATE ERASE".
+        ''' Patching these up after the pass completes is what makes such references
+        ''' resolve to addresses instead of stale constants.
+        ''' </summary>
+        Private Structure DeferredEquate
+            Public Label As String
+            Public Operand As String
+            Public IsMinus As Boolean
+            Public IsEcadr As Boolean
+            Public File As String
+            Public Line As Integer
+        End Structure
+
+        Private ReadOnly _deferredEquates As New List(Of DeferredEquate)()
+
         Private _assembledLines As Integer
 
         Public ReadOnly Property UsedInBank As Integer()
@@ -176,6 +197,15 @@ Namespace Agc
             Diagnostics.Suppress = True
             ResetPass()
             RunPass()
+            ResolveDeferredEquates()
+
+            ' Equates that named a symbol defined further down the file could only
+            ' be evaluated after the first sweep, so run the sweep again now that
+            ' they hold real values.  Without this, a use site in pass 2 still sees
+            ' the placeholder the equate had while its operand was unknown.
+            ResetPass()
+            RunPass()
+            ResolveDeferredEquates()
             Diagnostics.Suppress = False
 
             ' Pass 2 has every symbol available, so this is where real problems
@@ -184,6 +214,7 @@ Namespace Agc
             Image.Clear()
             ResetPass()
             RunPass()
+            ResolveDeferredEquates()
 
             ReportUndefinedSymbols()
 
@@ -432,6 +463,80 @@ Namespace Agc
         ''' rope banks but are allocated independently, so the AGC bank number is
         ''' used as the counter index.
         ''' </summary>
+        ''' <summary>
+        ''' Remember an equate that could not be evaluated yet.  The operand names a
+        ''' symbol that is defined further down the file.
+        ''' </summary>
+        Private Sub DeferEquate(line As AgcLine, operand As String, isMinus As Boolean, isEcadr As Boolean)
+            If String.IsNullOrEmpty(line.Label) Then Return
+            If _debugEncoding Then
+                Console.WriteLine("DEFER pass=" & _pass.ToString() & " " & line.Label &
+                                  " = " & operand & " (" & System.IO.Path.GetFileName(line.File) &
+                                  ":" & line.LineNumber.ToString() & ")")
+            End If
+            Dim d As New DeferredEquate()
+            d.Label = line.Label
+            d.Operand = operand
+            d.IsMinus = isMinus
+            d.IsEcadr = isEcadr
+            d.File = line.File
+            d.Line = line.LineNumber
+            _deferredEquates.Add(d)
+        End Sub
+
+        ''' <summary>
+        ''' Retry equates whose operands were not known when they were first seen.
+        ''' Repeat until no further progress, so that a chain of dependent equates
+        ''' resolves regardless of the order they appear in.
+        ''' </summary>
+        Private Sub ResolveDeferredEquates()
+            If _deferredEquates.Count = 0 Then Return
+
+            Dim remaining As New List(Of DeferredEquate)(_deferredEquates)
+            _deferredEquates.Clear()
+
+            Dim progress As Boolean = True
+            Dim passes As Integer = 0
+            While progress AndAlso remaining.Count > 0 AndAlso passes < 16
+                progress = False
+                passes += 1
+                Dim stillStuck As New List(Of DeferredEquate)()
+
+                For Each d As DeferredEquate In remaining
+                    Dim name As String = d.Operand
+                    Dim off As Integer = 0
+                    Dim numeric As Boolean = False
+                    Dim a As AgcAddress = ResolveOperand(name, off, numeric)
+                    If a.Invalid Then
+                        ' Still unknown; try again on the next sweep.
+                        stillStuck.Add(d)
+                        Continue For
+                    End If
+
+                    If d.IsEcadr Then
+                        Symbols.Define(d.Label, AgcAddress.Constant(EcadrOf(a)), True, d.File, d.Line)
+                    ElseIf d.IsMinus Then
+                        Symbols.Define(d.Label, AgcAddress.Constant(a.SReg - _pc.SReg), True, d.File, d.Line)
+                    Else
+                        If numeric Then a.IsConstant = True
+                        Symbols.Define(d.Label, a, True, d.File, d.Line)
+                    End If
+                    progress = True
+                Next
+
+                remaining = stillStuck
+            End While
+
+            ' Anything still unresolved is a genuine error; report it once.
+            For Each d As DeferredEquate In remaining
+                If _pass = 2 Then
+                    Diagnostics.Fatal(d.File, d.Line,
+                                      "Equate operand '" & d.Operand & "' is undefined.")
+                End If
+            Next
+            _deferredEquates.Clear()
+        End Sub
+
         Private Sub CreditWords(address As AgcAddress, count As Integer)
             If Not address.IsFixed OrElse address.Invalid Then Return
             Dim sreg As Integer = address.SReg And AgcWord.Mask15
@@ -492,24 +597,42 @@ Namespace Agc
         ''' <summary>
         ''' Split "NAME+3" / "NAME - 2" / "NAME" / "+3" / "-2" into a symbol name
         ''' and a numeric offset.
+        '''
+        ''' The offset may be separated by whitespace, which the AGC sources use
+        ''' heavily ("FLAGWRD5 = STATE +5").  Treating the space as part of the name
+        ''' makes the lookup fail and the equate silently becomes a constant, so the
+        ''' whitespace is skipped here and trailing blanks are trimmed.
         ''' </summary>
         Private Sub SplitSymbolAndOffset(ByRef name As String, ByRef offset As Integer)
             offset = 0
             If String.IsNullOrEmpty(name) Then Return
-            Dim s As String = name
+            Dim s As String = name.Trim()
+            If s.Length = 0 Then
+                name = ""
+                Return
+            End If
+
             Dim i As Integer = 1
             While i < s.Length
                 Dim c As Char = s(i)
-                If c = "+"c OrElse c = "-"c Then Exit While
+                If c = "+"c OrElse c = "-"c Then
+                    ' A sign introduces the offset; whitespace before it is padding
+                    ' rather than part of the symbol name.
+                    Dim tail As String = s.Substring(i).Trim()
+                    Dim v As Integer
+                    If AgcWord.TryParseInteger(tail, v) Then
+                        offset = v
+                        name = s.Substring(0, i).Trim()
+                        Return
+                    End If
+                    ' Not an offset after all (for example a name containing a sign),
+                    ' so keep scanning.
+                End If
                 i += 1
             End While
-            If i >= s.Length Then Return
-            Dim tail As String = s.Substring(i)
-            Dim v As Integer
-            If AgcWord.TryParseInteger(tail, v) Then
-                offset = v
-                name = s.Substring(0, i)
-            End If
+
+            ' No offset: the whole trimmed text is the name.
+            name = s
         End Sub
 
         ''' <summary>
@@ -574,8 +697,27 @@ Namespace Agc
                 Return bad
             End If
             Dim total As Integer = sym.PseudoValue + symOffset + offset
+            If sym.Super Then
+                ' A super-bank symbol already carries its bank and sub-address
+                ' reliably, and its PseudoValue is encoded 02000 below the flat form
+                ' that PseudoToAddress decodes for those banks.  Rather than round
+                ' trip through the flat space and land on an unrelated low bank,
+                ' rebuild the address from the symbol's own fields.
+                result = sym
+                result.SReg = sym.SReg + symOffset + offset
+                result.IsConstant = False
+                Return result
+            End If
             result = AgcCodec.PseudoToAddress(total)
             If result.Invalid Then
+                If _debugEncoding Then
+                    Console.WriteLine("UNRESOLVED name=[" & name & "] symName=[" & symName &
+                                      "] sym=" & sym.ToString() &
+                                      " pseudo=" & sym.PseudoValue.ToString() &
+                                      " symOffset=" & symOffset.ToString() &
+                                      " offset=" & offset.ToString() &
+                                      " total=" & total.ToString())
+                End If
                 result = AgcAddress.Constant(total)
             Else
                 ' A stored symbol always denotes memory.  The "this is also a

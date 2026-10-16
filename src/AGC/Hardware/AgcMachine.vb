@@ -79,6 +79,30 @@ Namespace Agc
             Cpu.StepOne()
         End Sub
 
+        ''' <summary>
+        ''' Development aid: run until the program counter reaches
+        ''' <paramref name="stopAt"/> (or the cycle budget is exhausted) and report
+        ''' the state at that moment.  Used to find where a boot goes wrong.
+        ''' </summary>
+        Public Function RunUntilPc(stopAt As Integer, maxCycles As Integer) As Boolean
+            Dim target As Integer = stopAt And &HFFF
+            Dim n As Integer = 0
+            While n < maxCycles AndAlso Not Cpu.Halted AndAlso (Cpu.Z And &HFFF) <> target
+                Cpu.StepOne()
+                n += 1
+            End While
+            Console.WriteLine("RunUntilPc target=" & AgcWord.ToOctal(target) &
+                              " reached=" & ((Cpu.Z And &HFFF) = target).ToString() &
+                              " after " & n.ToString("N0") & " instructions" &
+                              " ; Z=" & AgcWord.ToOctal(Cpu.Z) &
+                              " A=" & AgcWord.ToOctal(Cpu.A) &
+                              " L=" & AgcWord.ToOctal(Cpu.L) &
+                              " Q=" & AgcWord.ToOctal(Cpu.Q) &
+                              " FBANK=" & AgcWord.ToOctal(Cpu.GetErasable(&H8)) &
+                              " halted=" & Cpu.Halted.ToString())
+            Return (Cpu.Z And &HFFF) = target
+        End Function
+
         ''' <summary>Run for a number of simulated seconds.</summary>
         Public Sub RunSeconds(seconds As Double)
             Dim target As Long = Cpu.CycleCount + CLng(seconds * CyclesPerSecond)
@@ -142,6 +166,26 @@ Namespace Agc
             Console.WriteLine("Telemetry words: " & Io.TelemetryWords.ToString("N0") &
                               "   Channel writes: " & Io.ChannelWrites.ToString("N0"))
             Console.WriteLine("AGC clock (TIME1/TIME2): " & FormatClock())
+            ' Where the program actually ended up, and what it has been doing.
+            Console.WriteLine("Z (program counter): " & AgcWord.ToOctal(Cpu.Z) &
+                              "   NextZ: " & AgcWord.ToOctal(Cpu.NextZ))
+            Console.WriteLine("A=" & AgcWord.ToOctal(Cpu.A) &
+                              " L=" & AgcWord.ToOctal(Cpu.L) &
+                              " Q=" & AgcWord.ToOctal(Cpu.Q))
+            Console.WriteLine("FBANK=" & AgcWord.ToOctal(Cpu.GetErasable(&H8)) &
+                              " BBANK=" & AgcWord.ToOctal(Cpu.GetErasable(&HA)) &
+                              " EBANK=" & AgcWord.ToOctal(Cpu.GetErasable(&HD)))
+            If Interpreter IsNot Nothing Then
+                Console.WriteLine("Interpretive instructions executed: " &
+                                  Interpreter.InstructionCount.ToString("N0"))
+            End If
+            If Cpu.Alarms.Count > 0 Then
+                Console.Write("Alarms raised (" & Cpu.Alarms.Count.ToString() & "):")
+                For i As Integer = 0 To Math.Min(9, Cpu.Alarms.Count - 1)
+                    Console.Write(" " & AgcWord.ToOctal(Cpu.Alarms(i)))
+                Next
+                Console.WriteLine()
+            End If
         End Sub
 
         ' ------------------------------------------------------------------

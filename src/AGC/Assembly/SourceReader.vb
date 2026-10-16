@@ -205,6 +205,24 @@ Namespace Agc
                 ' The field at idx is the operation; leave it in place.
             Else
                 Dim opIndex As Integer = FirstKnownOperatorIndex(fields, idx)
+
+                ' A line with a single field that is not an operation is a bare
+                ' label, not a misspelled mnemonic.  The sources use this for
+                ' relative-branch targets that appear alone on an indented line,
+                ' for example "INTEGRV" or "CDULOGIC" with nothing after them.
+                ' Treating such a line as an opcode loses the label and reports a
+                ' bogus "unrecognized opcode".
+                If opIndex < 0 AndAlso fields.Count = idx + 1 AndAlso
+                   Not AgcWord.ContainsDigit(fields(idx)) Then
+                    If line.Label = "" Then line.Label = fields(idx)
+                    line.Opcode = ""
+                    line.Operand = ""
+                    line.Mod1 = ""
+                    line.Mod2 = ""
+                    line.Extra = ""
+                    Return line
+                End If
+
                 If opIndex >= 0 Then
                     For k As Integer = idx To opIndex - 1
                         If line.Label = "" Then line.Label = fields(k)
