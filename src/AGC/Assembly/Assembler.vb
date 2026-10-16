@@ -356,11 +356,13 @@ Namespace Agc
                 count = sreg - &H800
                 bank = pc.FB + 8 * If(pc.Super, 1, 0)
             ElseIf pc.Unbanked Then
-                If sreg >= &H1000 AndAlso sreg < &H1800 Then
-                    count = sreg - &H1000
+                If sreg >= &H800 AndAlso sreg <= &HBFF Then
+                    ' Bank 02 occupies 04000..05777.
+                    count = sreg - &H800
                     bank = 2
-                ElseIf sreg >= &H1800 AndAlso sreg < &H2000 Then
-                    count = sreg - &H1800
+                ElseIf sreg >= &HC00 AndAlso sreg <= &HFFF Then
+                    ' Bank 03 occupies 06000..07777.
+                    count = sreg - &HC00
                     bank = 3
                 Else
                     Return

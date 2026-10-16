@@ -46,10 +46,14 @@ Namespace Agc
             Array.Clear(Erasable, 0, Erasable.Length)
             Array.Clear(FixedChecksum, 0, FixedChecksum.Length)
             Array.Clear(FixedWordCount, 0, FixedWordCount.Length)
+            WrittenCount = 0
             For i As Integer = 0 To FixedBankCount - 1
                 FixedHighWater(i) = -1
             Next
         End Sub
+
+        ''' <summary>Number of words written into fixed memory (diagnostic).</summary>
+        Public Property WrittenCount As Integer
 
         ''' <summary>
         ''' Store a word in fixed memory.  <paramref name="offset"/> is the
@@ -62,6 +66,7 @@ Namespace Agc
             Fixed(bank, o) = word And AgcWord.Mask15
             FixedUsed(bank, o) = True
             FixedWordCount(bank) += 1
+            WrittenCount += 1
             If o > FixedHighWater(bank) Then FixedHighWater(bank) = o
         End Sub
 

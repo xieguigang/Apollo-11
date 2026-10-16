@@ -328,7 +328,10 @@ Namespace Agc
             Console.WriteLine("used b2=" & asm.UsedInBank(2).ToString() &
                               " b3=" & asm.UsedInBank(3).ToString() &
                               " b4=" & asm.UsedInBank(4).ToString() &
-                              " b8=" & asm.UsedInBank(8).ToString())
+                              " b8=" & asm.UsedInBank(8).ToString() &
+                              " written=" & asm.Image.WrittenCount.ToString() &
+                              " cnt2=" & asm.Image.FixedWordCount(2).ToString() &
+                              " hw2=" & asm.Image.FixedHighWater(2).ToString())
         End Sub
 
         ''' <summary>
