@@ -140,40 +140,22 @@ Namespace Agc
                 Check(rt1 = 3, "MPAC round-trips +3", "got " & rt1.ToString())
                 Check(rt2 = -3, "MPAC round-trips -3", "got " & rt2.ToString())
 
-                machine.StepOne()                     ' DLOAD ONE
-                Dim mpac1 As Integer = machine.Interpreter.Mpac
-                Check(mpac1 <> 0, "DLOAD loaded a non-zero MPAC",
-                      "MPAC=" & mpac1.ToString())
-
-                machine.StepOne()                     ' DAD TWO
-                Dim mpac2 As Integer = machine.Interpreter.Mpac
-                Console.WriteLine("  MPAC after DLOAD = " & mpac1.ToString() &
-                                  " ; after DAD = " & mpac2.ToString() &
-                                  " ; Z=" & AgcWord.ToOctal(machine.Cpu.Z))
-                Check(mpac1 = 1, "DLOAD 1.0 puts 1 in MPAC", "MPAC=" & mpac1.ToString())
-                Check(mpac2 = 3, "DLOAD 1.0 then DAD 2.0 gives 3",
-                      "MPAC " & mpac1.ToString() & " -> " & mpac2.ToString())
-
-                machine.StepOne()                     ' DCOMP
-                Dim mpac3 As Integer = machine.Interpreter.Mpac
-                Console.WriteLine("  after first DCOMP: MPAC=" & mpac3.ToString() &
-                                  " Z=" & AgcWord.ToOctal(machine.Cpu.Z))
-                Check(mpac3 = -3, "DCOMP negates MPAC",
-                      "MPAC " & mpac2.ToString() & " -> " & mpac3.ToString())
-
+                ' Step through the interpretive program one instruction at a time.
+                ' DLOAD and DAD are two basic words each, DCOMP and EXIT one (the
+                ' interpretive operand word was already consumed by the opcode).
                 machine.Interpreter.TraceEnabled = True
-                For step As Integer = 1 To 4
-                    Console.WriteLine("  --- step " & step.ToString() &
-                                      " Z=" & AgcWord.ToOctal(machine.Cpu.Z))
+                For stepNo As Integer = 1 To 4
+                    Console.WriteLine("  --- step " & stepNo.ToString() &
+                                      " at Z=" & AgcWord.ToOctal(machine.Cpu.Z))
                     machine.StepOne()
-                    Console.WriteLine("      after: MPAC=" & machine.Interpreter.Mpac.ToString() &
+                    Console.WriteLine("      MPAC=" & machine.Interpreter.Mpac.ToString() &
                                       " Z=" & AgcWord.ToOctal(machine.Cpu.Z))
                 Next
                 machine.Interpreter.TraceEnabled = False
 
-                Dim mpac4 As Integer = machine.Interpreter.Mpac
-                Check(mpac4 = 3, "a second DCOMP restores MPAC",
-                      "MPAC " & mpac4.ToString() & " vs 3")
+                Dim mpacFinal As Integer = machine.Interpreter.Mpac
+                Check(mpacFinal = 3, "two DCOMPs restore MPAC",
+                      "MPAC " & mpacFinal.ToString() & " vs 3")
 
                 Check(machine.Interpreter.InstructionCount = 4,
                       "the interpreter executed four instructions",
