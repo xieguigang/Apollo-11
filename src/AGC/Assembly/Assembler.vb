@@ -200,17 +200,7 @@ Namespace Agc
                 Dim isEquate As Boolean = (op = "EQUALS" OrElse op = "=" OrElse op = "=MINUS" _
                                            OrElse op = "=ECADR" OrElse op = "CHECK=")
                 DefineLabel(line, _pc, isEquate)
-                If _traceLines > 0 AndAlso (op = "SETLOC" OrElse op = "LOC" OrElse op = "BANK" OrElse op = "BLOCK") Then
-                    Console.WriteLine("DIR " & line.File.Substring(line.File.LastIndexOf("\"c) + 1) & ":" &
-                                      line.LineNumber.ToString() & " " & op & " " & line.Operand &
-                                      " pc_before=" & _pc.ToString())
-                End If
                 ProcessPseudoOp(line)
-                If _traceLines > 0 AndAlso (op = "SETLOC" OrElse op = "LOC" OrElse op = "BANK" OrElse op = "BLOCK") Then
-                    Console.WriteLine("DIR   -> pc_after=" & _pc.ToString() & " sreg=" & _pc.SReg.ToString() &
-                                      " fb=" & _pc.FB.ToString() & " super=" & _pc.Super.ToString() &
-                                      " banked=" & _pc.Banked.ToString())
-                End If
                 Return
             End If
 
