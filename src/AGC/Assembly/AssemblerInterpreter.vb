@@ -176,6 +176,12 @@ Namespace Agc
                 Else
                     encoded = EncodeInterpreterAddress(resolved, switchInc, argType)
                 End If
+                If _debugEncoding AndAlso _pc.SReg >= 2048 AndAlso _pc.SReg <= 2064 Then
+                    Console.WriteLine("IOPND at " & _pc.ToString() & " text=[" & text &
+                                      "] resolved=" & resolved.ToString() &
+                                      " sreg=" & AgcWord.ToOctal(resolved.SReg) &
+                                      " encoded=" & AgcWord.ToOctal(encoded))
+                End If
                 EmitAtCurrent(encoded)
                 Advance(1)
             End If
