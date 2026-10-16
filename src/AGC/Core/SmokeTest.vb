@@ -768,9 +768,16 @@ Namespace Agc
                 Dim machine As New AgcMachine(asm.Image, asm.Symbols, asm.Diagnostics)
                 machine.AttachConsole()
                 machine.Reset()
-                Console.WriteLine("  rope bank 2 word 0 = " & Octal(asm.Image.GetFixed(2, 2048)))
-                Console.WriteLine("  after load, fixed(2,0)=" & Octal(machine.Memory.Fixed(2, 0)) &
-                                  " fixed(4,0)=" & Octal(machine.Memory.Fixed(4, 0)) &
+                Dim codeAddr As AgcAddress = AgcCodec.PseudoToAddress(asm.Lookup("LOOP"))
+                Dim codeBank As Integer = -1
+                Dim codeOffset As Integer = -1
+                AgcAssembler.ResolveFixed(codeAddr, codeBank, codeOffset)
+                Console.WriteLine("  rope bank " & AgcAssembler.RopeBankOf(codeBank).ToString() &
+                                  " offset " & codeOffset.ToString() &
+                                  " = " & Octal(asm.Image.GetFixed(AgcAssembler.RopeBankOf(codeBank), codeOffset)))
+                Console.WriteLine("  after load, fixed(" & AgcAssembler.RopeBankOf(codeBank).ToString() &
+                                  "," & codeOffset.ToString() & ")=" &
+                                  Octal(machine.Memory.Fixed(AgcAssembler.RopeBankOf(codeBank), codeOffset)) &
                                   " Z=" & Octal(machine.Cpu.Z))
                 Dim traceCount As Integer = 0
                 machine.Cpu.Tracer = Sub(c As AgcCpu)
@@ -778,9 +785,7 @@ Namespace Agc
                                              traceCount += 1
                                              Console.WriteLine("    trace Z=" & AgcWord.ToOctal(c.Z) &
                                                                " instr=" & AgcWord.ToOctal(c.LastInstruction) &
-                                                               " opcode=" & AgcWord.ToOctal(c.LastOpcode) &
-                                                               " (dec instr=" & c.LastInstruction.ToString() &
-                                                               " op=" & c.LastOpcode.ToString() & ")")
+                                                               " opcode=" & AgcWord.ToOctal(c.LastOpcode))
                                          End If
                                      End Sub
                 machine.RunCycles(600)

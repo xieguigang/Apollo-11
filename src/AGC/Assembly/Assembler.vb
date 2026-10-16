@@ -133,7 +133,7 @@ Namespace Agc
         '''                   address as banks 00 and 01      -> bank 02
         '''     04000..07777  the pair's upper half (banks 02, 03) -> bank 02
         '''     010000..027777  ordinary banks                   -> 04..017
-        '''     030000..077777  the super-bank module            -> 024..035
+        '''     030000..043777  the super-bank module            -> 024..035
         ''' </summary>
         Public Shared Sub DecodePseudoBankOffset(pseudo As Integer, ByRef bank As Integer, ByRef offset As Integer)
             bank = -1
@@ -152,7 +152,7 @@ Namespace Agc
                 bank = 4 + (pseudo - 4096) \ 2048
                 offset = pseudo - (4096 + 2048 * (bank - 4))
             Else
-                ' 030000..077777: the super-bank module, hardware banks 024..035.
+                ' 030000..043777: the super-bank module, hardware banks 024..035.
                 bank = 24 + (pseudo - 12288) \ 2048
                 offset = pseudo - (12288 + 2048 * (bank - 24))
             End If
@@ -551,14 +551,6 @@ Namespace Agc
             Dim name As String = line.Label
             If AgcSourceReader.IsRelativeLabel(name) Then Return
             If Not IsValidSymbolName(name) Then Return
-            If _debugEncoding AndAlso (name = "EXTVERBS" OrElse name = "SELFCHEC") Then
-                Console.WriteLine("  DEFINE " & name & " = " & address.ToString() &
-                                  " invalid=" & address.Invalid.ToString() &
-                                  " kind=" & address.Kind.ToString() &
-                                  " fb=" & address.FB.ToString() &
-                                  " sreg=" & AgcWord.ToOctal(address.SReg) &
-                                  " [" & System.IO.Path.GetFileName(line.File) & ":" & line.LineNumber.ToString() & "]")
-            End If
             Symbols.Define(name, address, isEquate, line.File, line.LineNumber)
         End Sub
 

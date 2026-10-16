@@ -183,17 +183,21 @@ Namespace Agc
                     Diagnostics.Fatal(line.File, line.LineNumber, "BANK without operand requires fixed memory.")
                     Return
                 End If
-                Dim sourceBank As Integer
-                If _pc.SReg < 2048 Then
-                    ' The low 1K of the fixed-fixed pair: bit 01000 says which of the
-                    ' sources' banks 00 and 01 it is.
-                    sourceBank = If((_pc.SReg And &H400) <> 0, 1, 0)
-                ElseIf _pc.FB = 2 Then
-                    sourceBank = 2
+                Dim srcBank As Integer
+                If _pc.FB = 2 Then
+                    ' The fixed-fixed pair; the sources also call its halves banks
+                    ' 00 and 01 (below 04000) and 02 and 03 (above it).
+                    srcBank = If(_pc.SReg < 2048, If((_pc.SReg And &H400) <> 0, 1, 0), 2)
                 Else
-                    sourceBank = _pc.FB
+                    srcBank = _pc.FB + 8
                 End If
-                _pc = BankStartAddress(sourceBank, NextFreeInBank(sourceBank))
+                If _debugEncoding Then
+                    Console.WriteLine("  BANK(noop) pc=" & _pc.ToString() &
+                                      " srcBank=" & srcBank.ToString() &
+                                      " nextFree=" & NextFreeInBank(srcBank).ToString() &
+                                      " [" & System.IO.Path.GetFileName(line.File) & ":" & line.LineNumber.ToString() & "]")
+                End If
+                _pc = BankStartAddress(srcBank, NextFreeInBank(srcBank))
                 Return
             End If
 
