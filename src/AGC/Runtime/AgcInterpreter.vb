@@ -128,19 +128,17 @@ Namespace Agc
         ''' one's-complement magnitude whose sign lives in bit 14 (040000).
         ''' </summary>
         Private Function ReadMpac() As Integer
-            ' Read the words first: the sign is bit 14 of the high word, so it must
-            ' be tested before the value is narrowed to 14 bits.
+            ' A negative MPAC is the 28-bit one's complement of its magnitude, so
+            ' the sign bits sit in the top bits of the high word and must be tested
+            ' before the value is narrowed.
             Dim rawHi As Integer = ReadErasable(AddrMpac)
             Dim rawLo As Integer = ReadErasable(AddrMpacLow)
-            Dim hi As Integer = rawHi And &H3FFF
-            Dim lo As Integer = rawLo And &H3FFF
             If (rawHi And &H2000) <> 0 Then
-                ' Negative: complement each word within 14 bits and negate.
-                Dim mag As Integer = (((MpacModulus - hi) And &H3FFF) << 14) Or
-                                     ((MpacModulus - lo) And &H3FFF)
-                Return -mag
+                Dim cHi As Integer = (MpacModulus - 1) - rawHi
+                Dim cLo As Integer = (MpacModulus - 1) - rawLo
+                Return -(((cHi And &H3FFF) << 14) Or (cLo And &H3FFF))
             End If
-            Return (hi << 14) Or lo
+            Return ((rawHi And &H3FFF) << 14) Or (rawLo And &H3FFF)
         End Function
 
         ''' <summary>
@@ -155,16 +153,16 @@ Namespace Agc
         End Property
 
         ''' <summary>
-        ''' Store a signed integer into MPAC using the AGC's 14-bit
-        ''' one's-complement representation (bit 14 of the high word is the sign).
+        ''' Store a signed integer into MPAC.  Negating adds 040000 to each word,
+        ''' which places the sign bits in the top bits of the high word.
         ''' </summary>
         Private Sub WriteMpac(value As Integer)
-            Dim mag As Integer = If(value >= 0, value, -value)
-            Dim hi As Integer = (mag >> 14) And &H3FFF
-            Dim lo As Integer = mag And &H3FFF
+            Dim mag As Long = Math.Abs(CLng(value))
+            Dim hi As Integer = CInt((mag >> 14) And &H3FFF)
+            Dim lo As Integer = CInt(mag And &H3FFF)
             If value < 0 Then
-                hi = (MpacModulus - hi) And &H3FFF
-                lo = (MpacModulus - lo) And &H3FFF
+                hi = (hi + MpacModulus) And &H3FFF
+                lo = (lo + MpacModulus) And &H3FFF
             End If
             WriteErasable(AddrMpac, hi)
             WriteErasable(AddrMpacLow, lo)
