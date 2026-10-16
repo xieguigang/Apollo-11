@@ -44,6 +44,15 @@ Namespace Agc
             RunAritmeticProgram()
             RunInterpreterProgram()
             RunInterpretiveExecution()
+            RunVectorTest()
+
+            Console.WriteLine("Interpretive opcode table:")
+            Console.WriteLine("  registered mnemonics: " & AgcOpcodeTable.InterpretiveCount.ToString())
+            Dim collisions As List(Of String) = AgcOpcodeTable.InterpretiveCodeCollisions()
+            Console.WriteLine("  opcodes shared by more than one mnemonic: " & collisions.Count.ToString())
+            For Each c As String In collisions
+                Console.WriteLine("    " & c)
+            Next
 
             Console.WriteLine()
             Console.WriteLine("Smoke test: " & _passed.ToString() & " checks passed, " &
@@ -177,6 +186,62 @@ Namespace Agc
                 End Try
             End Try
         End Sub
+
+        ''' <summary>
+        ''' Exercise the vector and matrix path directly, without arranging an
+        ''' assembled instruction sequence.
+        ''' </summary>
+        Private Sub RunVectorTest()
+            Console.WriteLine("Vector and matrix operations:")
+
+            Dim machine As AgcMachine = NewMachine()
+            Dim interp As AgcInterpreter = machine.Interpreter
+
+            ' A vector at 0120 holding (0.5, 0, 0).  Vector components are whole
+            ' 15-bit words, so 0.5 is 020000 and zero is 0.  The addresses avoid
+            ' the interpreter's push-down list, which occupies 0100..010F.
+            machine.Memory.WriteErasable(&H120, &H2000)
+            machine.Memory.WriteErasable(&H121, 0)
+            machine.Memory.WriteErasable(&H122, 0)
+
+            ' A matrix at 0130 whose first row is (1, 0, 0); 1.0 is 037777.
+            machine.Memory.WriteErasable(&H130, &H7FFF)
+            machine.Memory.WriteErasable(&H131, 0)
+            machine.Memory.WriteErasable(&H132, 0)
+
+            ' The matrix routines take the matrix address from the push-down list.
+            interp.TestPushDown(&H130)
+            Console.WriteLine("  matrix 0130: direct=" & machine.Memory.ReadErasable(&H130).ToString() &
+                              " viaOperand=" & interp.TestReadComponent(&H130).ToString() &
+                              " ; vector 0120: direct=" & machine.Memory.ReadErasable(&H120).ToString() &
+                              " viaOperand=" & interp.TestReadComponent(&H120).ToString())
+
+            Dim vec As Integer() = interp.TestReadVector(&H120)
+            Console.WriteLine("  vector = (" & vec(0).ToString() & ", " & vec(1).ToString() &
+                              ", " & vec(2).ToString() & ")")
+            Check(vec(0) = 8192, "0.5 reads back as 8192 in a 15-bit component",
+                  vec(0).ToString())
+
+            interp.TestDotProduct(&H120)
+            Dim dot As Integer = interp.Mpac
+            Console.WriteLine("  dot product = " & dot.ToString())
+            ' NOTE: the dot product currently returns 0 because the matrix operand
+            ' read does not see the matrix even though PeekDown returns its address.
+            ' The vector read is correct, so the fault is in the operand lookup for
+            ' the matrix base rather than in the arithmetic.
+            Check(dot = 8192, "matrix row (1,0,0) . vector (0.5,0,0) = 0.5", dot.ToString())
+        End Sub
+
+        ''' <summary>An empty but usable machine, for tests that need no rope.</summary>
+        Private Function NewMachine() As AgcMachine
+            Dim image As New AgcRopeImage()
+            Dim symbols As New AgcSymbolTable()
+            Dim diag As New AgcDiagnostics()
+            Dim m As New AgcMachine(image, symbols, diag)
+            m.AttachConsole()
+            m.Reset()
+            Return m
+        End Function
 
         ''' </summary>
         Private Sub RunAritmeticProgram()

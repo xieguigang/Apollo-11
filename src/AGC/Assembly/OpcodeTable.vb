@@ -117,9 +117,42 @@ Namespace Agc
         End Function
 
         ''' <summary>
+        ''' Every interpretive mnemonic that shares an opcode with another.  The
+        ''' encoder packs two opcodes into one word, so collisions are expected for
+        ''' the combined forms, but they must be understood rather than accidental.
+        ''' </summary>
+        Public Function InterpretiveCodeCollisions() As List(Of String)
+            Dim byCode As New Dictionary(Of Integer, List(Of String))()
+            For Each pair As KeyValuePair(Of String, AgcOpcode) In _interpretive
+                Dim c As Integer = pair.Value.InterpreterCode
+                If Not byCode.ContainsKey(c) Then byCode(c) = New List(Of String)()
+                byCode(c).Add(pair.Key)
+            Next
+            Dim result As New List(Of String)()
+            For Each entry As KeyValuePair(Of Integer, List(Of String)) In byCode
+                If entry.Value.Count > 1 Then
+                    entry.Value.Sort()
+                    ' Report the code in octal: these are AGC opcode numbers, and
+                    ' printing them in decimal makes 0154 look like "156".
+                    result.Add(Convert.ToString(entry.Key, 8).PadLeft(3, "0"c) & ": " &
+                               String.Join(", ", entry.Value.ToArray()))
+                End If
+            Next
+            result.Sort()
+            Return result
+        End Function
+
+        ''' <summary>How many interpretive mnemonics are registered.</summary>
+        Public ReadOnly Property InterpretiveCount As Integer
+            Get
+                Return _interpretive.Count
+            End Get
+        End Property
+
+        ''' <summary>
         ''' True when the interpretive instruction needs a separate operand word.
-        ''' Operand-free forms (DCOMP, DSQ, EXIT, PUSH, DDOUBL, ...) are a single
-        ''' basic word, so the caller must not advance past a phantom operand.
+        ''' Operand-free forms (DCOMP, DSQ, EXIT, PUSH, ...) are a single basic
+        ''' word, so the caller must not advance past a phantom operand.
         ''' </summary>
         Public Function InterpretiveTakesOperand(code As Integer) As Boolean
             If code < 0 Then Return False

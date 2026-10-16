@@ -44,18 +44,18 @@ Namespace Agc
         Private ReadOnly _memory As AgcMemory
 
         ''' <summary>
-        ''' The interpretive opcodes this engine executes, as a sorted list of
-        ''' "NAME=code" strings.  Anything not listed will halt the CPU with an
+        ''' The interpretive opcodes this engine executes, as "NAME=code" strings
+        ''' with the code in octal.  Anything not listed will halt the CPU with an
         ''' "unrecognised opcode" diagnostic rather than silently doing nothing.
         ''' </summary>
         Public Shared Function ImplementedOpcodes() As List(Of String)
             Dim result As New List(Of String)()
             For Each item As String In New String() { _
-                "EXIT=000", "VLOAD=001", "VLOAD*=003", "CALL=016", "DLOAD=031", "DLOAD*=033",
-                "DSQ=030", "INCR,2=032", "INCR,1=036", "DCOMP=040", "SR=042", "ABS=058",
-                "DDV=045", "DDV*=047", "SL=046", "VADD=049", "VSUB=051", "VXSC=055",
-                "PUSH=078", "POP=076", "CLEAR=072", "BZE=052", "BPL=058", "GOTO=056",
-                "DSU=151", "DSU*=153", "DAD=161", "DAD*=163", "DMP=171", "DMP*=173"}
+                "EXIT=000", "VLOAD=001", "VLOAD*=003", "CALL=016", "DSQ=024", "INCR,2=026",
+                "INCR,1=030", "DLOAD=031", "DLOAD*=033", "DCOMP=032", "SL=034", "SR=036",
+                "DDV=037", "DDV*=039", "ABS=044", "VADD=045", "VSUB=047", "VXSC=049",
+                "BZE=052", "GOTO=056", "ABS/BPL=058", "CLEAR=062", "POP=064",
+                "PUSH=070", "DSU=071", "DSU*=073", "DAD=077", "DAD*=079", "DMP=081", "DMP*=083"}
                 result.Add(item)
             Next
             Return result
@@ -70,6 +70,26 @@ Namespace Agc
         ''' </summary>
         Public Sub SetMpacForTest(value As Integer)
             WriteMpac(value)
+        End Sub
+
+        ''' <summary>Push a word, for tests that need to prime the matrix pointer.</summary>
+        Public Sub TestPushDown(value As Integer)
+            PushDown(value)
+        End Sub
+
+        ''' <summary>Read a three-component vector, for tests.</summary>
+        Public Function TestReadVector(baseAddr As Integer) As Integer()
+            Return ReadVector(baseAddr)
+        End Function
+
+        ''' <summary>Read one component through the operand path, for tests.</summary>
+        Public Function TestReadComponent(a As Integer) As Integer
+            Return ReadComponent(a)
+        End Function
+
+        ''' <summary>Run a dot product, for tests.</summary>
+        Public Sub TestDotProduct(operand As Integer)
+            DotProduct(operand)
         End Sub
 
         ''' <summary>Development aid: print each interpretive instruction as it runs.</summary>
@@ -377,10 +397,26 @@ Namespace Agc
                     PushDown((_cpu.Z + 1) And &HFFF)
                     Return GoToAddress(operand)
 
+                Case &H2D, &H2F                   ' MXV / MXV*: MPAC = M * V
+                    Return MatrixTimesVector(operand)
+
+                Case &H5D, &H5F                   ' DOT / DOT*: MPAC = M . V
+                    Return DotProduct(operand)
+
                 Case &H5A                        ' BPL: branch when MPAC >= 0
                     If ReadMpac() >= 0 Then Return GoToAddress(operand)
                     Return True
 
+                Case &H29, &H2B                   ' PDDL / PDDL*: push down the operand
+                    PushDown(ReadOperand(operand))
+                    Return True
+
+                Case &H31, &H33                   ' PDVL / PDVL*: push the vector's first word
+                    PushDown(ReadOperand(operand))
+                    Return True
+
+                Case &H3D, &H3F                   ' NORM / NORM*: normalise MPAC
+                    Return NormaliseMpac(operand)
                 Case &H52                        ' BZE: branch when MPAC = 0
                     If ReadMpac() = 0 Then Return GoToAddress(operand)
                     Return True
@@ -471,6 +507,95 @@ Namespace Agc
         Private Function VectorAdd(operand As Integer, sign As Integer) As Boolean
             Dim v As Integer = ReadSignedOperand(operand)
             WriteMpac(ReadMpac() + CLng(sign * v) * &H4000L)
+            Return True
+        End Function
+
+        ' ------------------------------------------------------------------
+        ' Vectors and matrices
+        '
+        ' A vector is three consecutive words, each a 15-bit component.  A matrix
+        ' is nine consecutive words read as three rows.  The matrix routines take
+        ' the matrix address from the push-down list (the usual "VXSC / MXV"
+        ' idiom pushes it first with SETPD or PDDL) and the vector address from
+        ' the instruction operand.
+        ' ------------------------------------------------------------------
+
+        Private Const VectorComponents As Integer = 3
+
+        ''' <summary>
+        ''' Read a 15-bit vector component as a signed integer.  Vector and matrix
+        ''' components are whole 15-bit words, unlike MPAC's 14-bit halves, so 1.0
+        ''' is 037777 and 0.5 is 020000.
+        ''' </summary>
+        Private Function ReadComponent(a As Integer) As Integer
+            Dim v As Integer = ReadOperand(a) And AgcWord.Mask15
+            If (v And &H4000) <> 0 Then
+                Return -((AgcWord.Mask15 Xor v) And AgcWord.Mask15)
+            End If
+            Return v
+        End Function
+
+        Private Function ReadVector(baseAddr As Integer) As Integer()
+            Dim v(VectorComponents - 1) As Integer
+            For i As Integer = 0 To VectorComponents - 1
+                v(i) = ReadComponent(baseAddr + i)
+            Next
+            Return v
+        End Function
+
+        ''' <summary>
+        ''' MPAC = the matrix at the top of the push-down list times the vector at
+        ''' the operand.  A component product is divided by 040000 because the
+        ''' components are fractions.
+        ''' </summary>
+        Private Function MatrixTimesVector(operand As Integer) As Boolean
+            Dim matrixAddr As Integer = PeekDown(1)
+            Dim vec As Integer() = ReadVector(operand)
+            Dim result(VectorComponents - 1) As Integer
+            For row As Integer = 0 To VectorComponents - 1
+                Dim sum As Long = 0
+                For col As Integer = 0 To VectorComponents - 1
+                    sum += CLng(ReadComponent(matrixAddr + row * VectorComponents + col)) * CLng(vec(col))
+                Next
+                result(row) = CInt(sum >> 14)
+            Next
+            ' Only the first two components fit in MPAC, which is the AGC's
+            ' convention: the third is left for the caller to handle.
+            WriteMpac((CLng(result(0)) << 14) Or (result(1) And MpacWordMask))
+            Return True
+        End Function
+
+        ''' <summary>MPAC = the dot product of the matrix's first row and the vector.</summary>
+        Private Function DotProduct(operand As Integer) As Boolean
+            Dim matrixAddr As Integer = PeekDown(1)
+            Dim vec As Integer() = ReadVector(operand)
+            Dim sum As Long = 0
+            For col As Integer = 0 To VectorComponents - 1
+                sum += CLng(ReadComponent(matrixAddr + col)) * CLng(vec(col))
+            Next
+            WriteMpac(CInt(sum >> 14))
+            Return True
+        End Function
+
+        ''' <summary>
+        ''' Normalise MPAC: shift it left until its most significant bit is set,
+        ''' leaving the accumulated shift count at the operand address.  The AGC
+        ''' uses this to bring a vector into a known range before a divide.
+        ''' </summary>
+        Private Function NormaliseMpac(operand As Integer) As Boolean
+            Dim v As Integer = ReadMpac()
+            Dim count As Integer = 0
+            If v <> 0 Then
+                Dim mag As Long = Math.Abs(CLng(v))
+                While (mag And &H10000000L) = 0 AndAlso count < 28
+                    mag <<= 1
+                    count += 1
+                End While
+                If v < 0 Then mag = -mag
+                v = CInt(mag)
+            End If
+            WriteMpac(v)
+            WriteOperand(operand, count)
             Return True
         End Function
 
