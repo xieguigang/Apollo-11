@@ -325,14 +325,10 @@ Namespace Agc
                 Next
                 Console.WriteLine(sb.ToString())
             Next
-            Console.WriteLine("used: " & String.Join(", ",
-                New List(Of String)(New String() {
-                    "b2=" & asm.UsedInBank(2).ToString(),
-                    "b3=" & asm.UsedInBank(3).ToString(),
-                    "b4=" & asm.UsedInBank(4).ToString(),
-                    "b5=" & asm.UsedInBank(5).ToString(),
-                    "b6=" & asm.UsedInBank(6).ToString(),
-                    "b10=" & asm.UsedInBank(8).ToString()})))
+            Console.WriteLine("used b2=" & asm.UsedInBank(2).ToString() &
+                              " b3=" & asm.UsedInBank(3).ToString() &
+                              " b4=" & asm.UsedInBank(4).ToString() &
+                              " b8=" & asm.UsedInBank(8).ToString())
         End Sub
 
         ''' <summary>
