@@ -107,14 +107,39 @@ Namespace Agc
                 Dim machine As New AgcMachine(asm.Image, asm.Symbols, asm.Diagnostics)
                 machine.AttachConsole()
                 machine.Reset()
-                machine.Interpreter.TraceEnabled = True
-                machine.Cpu.TraceFallback = True
-                Console.WriteLine("  interp attached = " & (machine.Cpu.Interpreter IsNot Nothing).ToString() &
-                                  " ; Z at start = " & AgcWord.ToOctal(machine.Cpu.Z) &
-                                  " ; word at 04000 = " & AgcWord.ToOctal(machine.Memory.ReadFixed(&H800)))
+                machine.Interpreter.TraceEnabled = False
+
+                Console.WriteLine("  code words 04000..04011: " &
+                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2048)) & " " &
+                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2049)) & " " &
+                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2050)) & " " &
+                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2051)) & " " &
+                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2052)) & " " &
+                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2053)) & " " &
+                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2054)) & " " &
+                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2055)) & " " &
+                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2056)) & " " &
+                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2057)))
 
                 ' DLOAD and DAD are each two basic words.  Step one instruction at a
                 ' time and inspect MPAC (erasable words 0 and 1).
+                ' Prove the MPAC sign encoding in isolation, before relying on the
+                ' instructions that use it.  MPAC occupies erasable words 0 and 1;
+                ' a negative value is the 28-bit one's complement of its magnitude.
+                ' This is done on a throw-away machine so that it cannot disturb the
+                ' instruction sequence exercised below.
+                Dim probe As New AgcMachine(asm.Image, asm.Symbols, asm.Diagnostics)
+                probe.AttachConsole()
+                probe.Reset()
+                probe.Interpreter.SetMpacForTest(3)
+                Dim rt1 As Integer = probe.Interpreter.Mpac
+                probe.Interpreter.SetMpacForTest(-3)
+                Dim rt2 As Integer = probe.Interpreter.Mpac
+                Console.WriteLine("  MPAC round trip: +3 -> " & rt1.ToString() &
+                                  " ; -3 -> " & rt2.ToString())
+                Check(rt1 = 3, "MPAC round-trips +3", "got " & rt1.ToString())
+                Check(rt2 = -3, "MPAC round-trips -3", "got " & rt2.ToString())
+
                 machine.StepOne()                     ' DLOAD ONE
                 Dim mpac1 As Integer = machine.Interpreter.Mpac
                 Check(mpac1 <> 0, "DLOAD loaded a non-zero MPAC",
@@ -131,13 +156,24 @@ Namespace Agc
 
                 machine.StepOne()                     ' DCOMP
                 Dim mpac3 As Integer = machine.Interpreter.Mpac
+                Console.WriteLine("  after first DCOMP: MPAC=" & mpac3.ToString() &
+                                  " Z=" & AgcWord.ToOctal(machine.Cpu.Z))
                 Check(mpac3 = -3, "DCOMP negates MPAC",
                       "MPAC " & mpac2.ToString() & " -> " & mpac3.ToString())
 
-                machine.StepOne()                     ' DCOMP
+                machine.Interpreter.TraceEnabled = True
+                For step As Integer = 1 To 4
+                    Console.WriteLine("  --- step " & step.ToString() &
+                                      " Z=" & AgcWord.ToOctal(machine.Cpu.Z))
+                    machine.StepOne()
+                    Console.WriteLine("      after: MPAC=" & machine.Interpreter.Mpac.ToString() &
+                                      " Z=" & AgcWord.ToOctal(machine.Cpu.Z))
+                Next
+                machine.Interpreter.TraceEnabled = False
+
                 Dim mpac4 As Integer = machine.Interpreter.Mpac
                 Check(mpac4 = 3, "a second DCOMP restores MPAC",
-                      "MPAC " & mpac4.ToString() & " vs " & mpac2.ToString())
+                      "MPAC " & mpac4.ToString() & " vs 3")
 
                 Check(machine.Interpreter.InstructionCount = 4,
                       "the interpreter executed four instructions",

@@ -107,6 +107,15 @@ Namespace Agc
             Return _basic.TryGetValue(name, op)
         End Function
 
+        ''' <summary>True when <paramref name="code"/> names an interpretive instruction.</summary>
+        Public Function InterpretiveCodeExists(code As Integer) As Boolean
+            If code < 0 Then Return False
+            For Each pair As KeyValuePair(Of String, AgcOpcode) In _interpretive
+                If pair.Value.InterpreterCode = code Then Return True
+            Next
+            Return False
+        End Function
+
         Public Function TryGetInterpretive(name As String, ByRef op As AgcOpcode) As Boolean
             Return _interpretive.TryGetValue(name, op)
         End Function

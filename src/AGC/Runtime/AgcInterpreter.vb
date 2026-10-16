@@ -46,6 +46,14 @@ Namespace Agc
         ''' <summary>Number of interpretive instructions executed.</summary>
         Public Property InstructionCount As Integer
 
+        ''' <summary>
+        ''' Set MPAC directly.  Used by tests to exercise the sign encoding without
+        ''' going through an instruction.
+        ''' </summary>
+        Public Sub SetMpacForTest(value As Integer)
+            WriteMpac(value)
+        End Sub
+
         ''' <summary>Development aid: print each interpretive instruction as it runs.</summary>
         Public Property TraceEnabled As Boolean
 
@@ -75,12 +83,22 @@ Namespace Agc
         ' Memory access helpers
         ' ------------------------------------------------------------------
 
+        ''' <summary>
+        ''' Read interpretive machine state.
+        '''
+        ''' This deliberately goes to the erasable memory array rather than through
+        ''' the CPU's register-aware Get/SetErasable.  In the real AGC, MPAC lives at
+        ''' erasable 0 and 1, but addresses 0, 1 and 2 are also the A, L and Q
+        ''' registers, so the register path would split MPAC between a register and
+        ''' memory.  The interpretive engine sees MPAC as two plain memory words,
+        ''' which is how the flight software reaches it.
+        ''' </summary>
         Private Function ReadErasable(a As Integer) As Integer
-            Return _cpu.GetErasable(a And &HFFF) And AgcWord.Mask15
+            Return _memory.ReadErasable(a And AgcWord.Mask12) And AgcWord.Mask15
         End Function
 
         Private Sub WriteErasable(a As Integer, value As Integer)
-            _cpu.SetErasable(a And &HFFF, value And AgcWord.Mask15)
+            _memory.WriteErasable(a And AgcWord.Mask12, value And AgcWord.Mask15)
         End Sub
 
         ''' <summary>
@@ -123,22 +141,25 @@ Namespace Agc
         ''' <summary>Modulus of a single MPAC word: 14 bits.</summary>
         Private Const MpacModulus As Integer = &H4000
 
+        ''' <summary>Mask of a single 14-bit MPAC word.</summary>
+        Private Const MpacWordMask As Integer = &H3FFF
+
         ''' <summary>
-        ''' Read MPAC as a signed integer.  Each MPAC word holds a 14-bit
-        ''' one's-complement magnitude whose sign lives in bit 14 (040000).
+        ''' Read MPAC as a signed integer.  MPAC is a 28-bit one's-complement
+        ''' accumulator: a negative value is stored as the 28-bit complement of its
+        ''' magnitude, so the sign bits occupy the top bits of the high word.  They
+        ''' must be tested before the word is narrowed to 14 bits.
         ''' </summary>
         Private Function ReadMpac() As Integer
-            ' A negative MPAC is the 28-bit one's complement of its magnitude, so
-            ' the sign bits sit in the top bits of the high word and must be tested
-            ' before the value is narrowed.
             Dim rawHi As Integer = ReadErasable(AddrMpac)
             Dim rawLo As Integer = ReadErasable(AddrMpacLow)
             If (rawHi And &H2000) <> 0 Then
-                Dim cHi As Integer = (MpacModulus - 1) - rawHi
-                Dim cLo As Integer = (MpacModulus - 1) - rawLo
-                Return -(((cHi And &H3FFF) << 14) Or (cLo And &H3FFF))
+                ' Complement each word within 14 bits to recover the magnitude.
+                Dim cHi As Integer = (MpacWordMask Xor rawHi) And MpacWordMask
+                Dim cLo As Integer = (MpacWordMask Xor rawLo) And MpacWordMask
+                Return -((cHi << 14) Or cLo)
             End If
-            Return ((rawHi And &H3FFF) << 14) Or (rawLo And &H3FFF)
+            Return ((rawHi And MpacWordMask) << 14) Or (rawLo And MpacWordMask)
         End Function
 
         ''' <summary>
@@ -153,16 +174,24 @@ Namespace Agc
         End Property
 
         ''' <summary>
-        ''' Store a signed integer into MPAC.  Negating adds 040000 to each word,
-        ''' which places the sign bits in the top bits of the high word.
+        ''' Store a signed integer into MPAC.  A negative value is the 28-bit
+        ''' one's-complement of its magnitude, so each word is complemented within
+        ''' 14 bits; the sign bits then live in the top bits of the high word.
         ''' </summary>
         Private Sub WriteMpac(value As Integer)
+            If TraceEnabled Then
+                Console.WriteLine("      WriteMpac(" & value.ToString() & ")")
+            End If
             Dim mag As Long = Math.Abs(CLng(value))
-            Dim hi As Integer = CInt((mag >> 14) And &H3FFF)
-            Dim lo As Integer = CInt(mag And &H3FFF)
+            Dim hi As Integer = CInt(mag >> 14) And MpacWordMask
+            Dim lo As Integer = CInt(mag And MpacWordMask)
             If value < 0 Then
-                hi = (hi + MpacModulus) And &H3FFF
-                lo = (lo + MpacModulus) And &H3FFF
+                hi = (MpacWordMask Xor hi) And MpacWordMask
+                lo = (MpacWordMask Xor lo) And MpacWordMask
+            End If
+            If TraceEnabled Then
+                Console.WriteLine("      -> hi=" & AgcWord.ToOctal(hi) & " (" & hi.ToString() &
+                                  ") lo=" & AgcWord.ToOctal(lo) & " (" & lo.ToString() & ")")
             End If
             WriteErasable(AddrMpac, hi)
             WriteErasable(AddrMpacLow, lo)
@@ -196,28 +225,45 @@ Namespace Agc
         ''' Execute the interpretive instruction selected by <paramref name="word"/>.
         ''' Returns True when the instruction was understood.
         ''' </summary>
+        ''' <summary>
+        ''' Execute the interpretive instruction selected by <paramref name="word"/>.
+        ''' Returns True when the instruction was understood.
+        '''
+        ''' An instruction word is "077777 &amp; ~((code1+1) | ((code2+1) &lt;&lt; 7))",
+        ''' so both fields must be decoded and the one that names a real
+        ''' instruction selected.  The assembler writes a second opcode into bits
+        ''' 7-13 for the combined forms, which means a word can carry two codes and
+        ''' a naive read of the low field alone picks the wrong one.  Resolving
+        ''' both against the instruction table removes the guesswork.
+        ''' </summary>
         Public Function Execute(word As Integer, operand As Integer) As Boolean
             InstructionCount += 1
 
-            ' The instruction word is
-            '     077777 & ~((code + 1) | ((code2 + 1) << 7))
-            ' The complement clears the bits of (code+1) in 0-6 and of (code2+1)
-            ' in 7-13.  Because the two halves are combined with OR and the
-            ' operands are never all-ones in a way that overlaps, XOR with the
-            ' original mask recovers each half exactly.
             Dim halves As Integer = AgcWord.Mask15 Xor (word And AgcWord.Mask15)
-            Dim code As Integer = (halves And &H7F) - 1
+            Dim code1 As Integer = (halves And &H7F) - 1
             Dim code2 As Integer = ((halves >> 7) And &H7F) - 1
+
+            Dim code As Integer = -1
+            If code2 >= 0 AndAlso AgcOpcodeTable.InterpretiveCodeExists(code2) Then
+                ' A second opcode is present and is a real instruction; in the
+                ' combined forms it is the one that executes.
+                code = code2
+            ElseIf code1 >= 0 AndAlso AgcOpcodeTable.InterpretiveCodeExists(code1) Then
+                code = code1
+            ElseIf code1 >= 0 Then
+                code = code1
+            ElseIf code2 >= 0 Then
+                code = code2
+            End If
 
             If TraceEnabled Then
                 Console.WriteLine("    INTERP word=" & AgcWord.ToOctal(word) &
                                   " operand=" & AgcWord.ToOctal(operand) &
-                                  " code=" & code.ToString() & " code2=" & code2.ToString())
+                                  " code1=" & code1.ToString() & " code2=" & code2.ToString() &
+                                  " -> code=" & code.ToString())
             End If
 
-            If code = 0 AndAlso code2 >= 0 Then code = code2
             If code < 0 Then Return False
-
             Return ExecuteCode(code, operand)
         End Function
 
