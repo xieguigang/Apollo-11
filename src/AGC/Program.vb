@@ -103,8 +103,10 @@ Namespace Agc
                     CommandCompare(rest)
                 Case "probe"
                     If rest.Count > 0 Then
-                        DebugProbe.DumpLines(rest(0), New Integer() {34, 108, 116, 118})
+                        DebugProbe.DumpLines(rest(0), New Integer() {32, 34, 36, 37})
                     End If
+                Case "bankdump"
+                    CommandBankDump(rest)
                 Case "dump"
                     CommandDump(rest)
                 Case "-h", "--help", "help", "/?"
@@ -299,6 +301,38 @@ Namespace Agc
             Else
                 Console.WriteLine(failures.ToString() & " self test(s) failed.")
             End If
+        End Sub
+
+        ''' <summary>Development aid: print the first words of selected banks.</summary>
+        Private Sub CommandBankDump(rest As List(Of String))
+            Dim positional As New List(Of String)()
+            For Each a As String In rest
+                If Not a.StartsWith("-", StringComparison.Ordinal) Then positional.Add(a)
+            Next
+            If positional.Count < 1 Then
+                Console.Error.WriteLine("bankdump requires <source-dir>")
+                Return
+            End If
+            Dim sourceDir As String = ResolveSourceDirectory(positional(0))
+            If sourceDir = "" Then Return
+            Dim asm As AgcAssembler = CreateAssembler(sourceDir, False)
+            asm.Assemble()
+            For Each bank As Integer In New Integer() {0, 1, 2, 3, 4, 5, 6}
+                Dim sb As New StringBuilder()
+                sb.Append("bank ").Append(bank.ToString("00")).Append(": ")
+                For o As Integer = 0 To 15
+                    sb.Append(AgcWord.ToOctal(asm.Image.Fixed(bank, o))).Append(" ")
+                Next
+                Console.WriteLine(sb.ToString())
+            Next
+            Console.WriteLine("used: " & String.Join(", ",
+                New List(Of String)(New String() {
+                    "b2=" & asm.UsedInBank(2).ToString(),
+                    "b3=" & asm.UsedInBank(3).ToString(),
+                    "b4=" & asm.UsedInBank(4).ToString(),
+                    "b5=" & asm.UsedInBank(5).ToString(),
+                    "b6=" & asm.UsedInBank(6).ToString(),
+                    "b10=" & asm.UsedInBank(8).ToString()})))
         End Sub
 
         ''' <summary>
