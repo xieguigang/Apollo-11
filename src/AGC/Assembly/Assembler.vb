@@ -159,16 +159,13 @@ Namespace Agc
         End Sub
 
         ''' <summary>
-        ''' The flat (pseudo) address of word 0 of a hardware bank, in the 2K offset
-        ''' space the bank allocator works in.  A bank is 2K, so the block for bank n
-        ''' is 02000 wide:
+        ''' The flat (pseudo) address of word 0 of a hardware bank.  A bank is 2K, so
+        ''' the block for bank n is 02000 wide:
         '''
-        '''     bank 02          006000   (the fixed-fixed pair; its low 1K, which the
-        '''                               sources also address as banks 00 and 01, is
-        '''                               what "006000 + offset" produces for offsets
-        '''                               0..01777)
+        '''     bank 02          004000   (the fixed-fixed pair, which the sources also
+        '''                               address as banks 00 and 01 below 04000)
         '''     banks 04..023    010000 + 02000*(bank-04)
-        '''     banks 024..035   030000 + 02000*(bank-024)
+        '''     banks 024..035   030000 + 02000*(bank-24)
         ''' </summary>
         Public Shared Function BankPseudoBase(bank As Integer) As Integer
             If bank <= 3 Then Return 4096
