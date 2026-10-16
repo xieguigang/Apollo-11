@@ -145,7 +145,6 @@ Namespace Agc
             Else
                 Dim num As Integer
                 If AgcWord.TryParseInteger(operand, num) AndAlso Not AgcSourceReader.IsRelativeLabel(operand) Then
-                    Diagnostics.Info(line.File, line.LineNumber, "SETLOC [" & operand & "] -> " & num.ToString())
                     _pc = AgcCodec.PseudoToAddress(num)
                     If _pc.Invalid Then
                         Diagnostics.Fatal(line.File, line.LineNumber, "SETLOC address out of range.")
@@ -177,9 +176,6 @@ Namespace Agc
 
         Private Sub PseudoBank(line As AgcLine)
             Dim operand As String = line.Operand
-            Diagnostics.Info(line.File, line.LineNumber,
-                             "BANK op=[" & operand & "] pc_before=" & _pc.ToString() &
-                             " used2=" & BankUsed(2).ToString() & " used8=" & BankUsed(8).ToString())
 
             If String.IsNullOrEmpty(operand) Then
                 ' Advance to the first unused word of the current bank.
@@ -190,10 +186,12 @@ Namespace Agc
                 If _pc.Banked Then
                     Dim bank As Integer = _pc.FB + 8 * If(_pc.Super, 1, 0)
                     _pc.SReg = &H800 + BankUsed(bank)
-                ElseIf _pc.SReg >= &H1000 AndAlso _pc.SReg <= &H17FF Then
-                    _pc.SReg = &H1000 + BankUsed(2)
-                ElseIf _pc.SReg >= &H1800 AndAlso _pc.SReg <= &H1FFF Then
-                    _pc.SReg = &H1800 + BankUsed(3)
+                ElseIf _pc.SReg >= &H800 AndAlso _pc.SReg <= &HBFF Then
+                    ' Bank 02 occupies 04000..05777.
+                    _pc.SReg = &H800 + BankUsed(2)
+                ElseIf _pc.SReg >= &HC00 AndAlso _pc.SReg <= &HFFF Then
+                    ' Bank 03 occupies 06000..07777.
+                    _pc.SReg = &HC00 + BankUsed(3)
                 End If
                 Return
             End If

@@ -314,16 +314,8 @@ Namespace Agc
             _pc = AgcCodec.IncPc(_pc, count)
         End Sub
 
-        Private _storeTraceCount As Integer
-
         Private Sub StoreWordAt(address As AgcAddress, word As Integer)
             word = word And AgcWord.Mask15
-            If _storeTraceCount < 12 Then
-                _storeTraceCount += 1
-                Diagnostics.Info(_currentLine.File, _currentLine.LineNumber,
-                                 "STORE " & AgcWord.ToOctal(word) & " at " & address.ToString() &
-                                 " kind=" & address.Kind.ToString() & " banked=" & address.Banked.ToString())
-            End If
             If address.IsErasable Then
                 Dim sreg As Integer = address.SReg And AgcWord.Mask15
                 Dim bank As Integer
