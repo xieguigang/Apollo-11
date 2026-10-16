@@ -76,6 +76,20 @@ Namespace Agc
         '''         EXIT
         '''     ONE     2DEC    1.0
         '''     TWO     2DEC    2.0
+        ''' <summary>
+        ''' Execute a sequence of interpretive (Danzig) instructions on the virtual
+        ''' hardware and check the arithmetic.
+        '''
+        '''     SETLOC  04000
+        '''     BANK
+        '''         DLOAD   ONE         # MPAC = 1
+        '''         DAD     TWO         # MPAC = 3
+        '''         DSU     ONE         # MPAC = 2
+        '''         DCOMP               # MPAC = -2
+        '''         DABS                # MPAC = 2
+        '''         EXIT
+        '''     ONE     2DEC    1.0
+        '''     TWO     2DEC    2.0
         ''' </summary>
         Private Sub RunInterpretiveExecution()
             Console.WriteLine("Interpretive (Danzig) execution test:")
@@ -90,8 +104,9 @@ Namespace Agc
                 src.Append(t & "BANK" & vbCrLf)
                 src.Append(one & "DLOAD" & t & "ONE" & vbCrLf)
                 src.Append(one & "DAD" & t & "TWO" & vbCrLf)
+                src.Append(one & "DSU" & t & "ONE" & vbCrLf)
                 src.Append(one & "DCOMP" & vbCrLf)
-                src.Append(one & "DCOMP" & vbCrLf)
+                src.Append(one & "ABS" & vbCrLf)
                 src.Append(one & "EXIT" & vbCrLf)
                 src.Append("ONE" & t & "2DEC" & one & "1.0" & vbCrLf)
                 src.Append("TWO" & t & "2DEC" & one & "2.0" & vbCrLf)
@@ -104,30 +119,8 @@ Namespace Agc
                 Check(ok, "interpretive program assembles", asm.Diagnostics.FormatAll(10))
                 If Not ok Then Return
 
-                Dim machine As New AgcMachine(asm.Image, asm.Symbols, asm.Diagnostics)
-                machine.AttachConsole()
-                machine.Reset()
-                machine.Interpreter.TraceEnabled = False
-
-                Console.WriteLine("  code words 04000..04011: " &
-                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2048)) & " " &
-                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2049)) & " " &
-                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2050)) & " " &
-                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2051)) & " " &
-                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2052)) & " " &
-                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2053)) & " " &
-                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2054)) & " " &
-                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2055)) & " " &
-                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2056)) & " " &
-                                  AgcWord.ToOctal(asm.Image.GetFixed(2, 2057)))
-
-                ' DLOAD and DAD are each two basic words.  Step one instruction at a
-                ' time and inspect MPAC (erasable words 0 and 1).
-                ' Prove the MPAC sign encoding in isolation, before relying on the
-                ' instructions that use it.  MPAC occupies erasable words 0 and 1;
-                ' a negative value is the 28-bit one's complement of its magnitude.
-                ' This is done on a throw-away machine so that it cannot disturb the
-                ' instruction sequence exercised below.
+                ' The MPAC sign encoding is exercised on its own machine first so
+                ' that it cannot disturb the instruction sequence below.
                 Dim probe As New AgcMachine(asm.Image, asm.Symbols, asm.Diagnostics)
                 probe.AttachConsole()
                 probe.Reset()
@@ -135,26 +128,45 @@ Namespace Agc
                 Dim rt1 As Integer = probe.Interpreter.Mpac
                 probe.Interpreter.SetMpacForTest(-3)
                 Dim rt2 As Integer = probe.Interpreter.Mpac
-                Console.WriteLine("  MPAC round trip: +3 -> " & rt1.ToString() &
-                                  " ; -3 -> " & rt2.ToString())
                 Check(rt1 = 3, "MPAC round-trips +3", "got " & rt1.ToString())
                 Check(rt2 = -3, "MPAC round-trips -3", "got " & rt2.ToString())
 
-                ' Step through the interpretive program one instruction at a time.
-                ' DLOAD and DAD are two basic words each; DCOMP and EXIT are a single
-                ' word because they take no operand.
-                For stepNo As Integer = 1 To 4
-                    machine.StepOne()
-                Next
-                Console.WriteLine("  final MPAC=" & machine.Interpreter.Mpac.ToString() &
-                                  " Z=" & AgcWord.ToOctal(machine.Cpu.Z))
+                Dim machine As New AgcMachine(asm.Image, asm.Symbols, asm.Diagnostics)
+                machine.AttachConsole()
+                machine.Reset()
 
-                Dim mpacFinal As Integer = machine.Interpreter.Mpac
-                Check(mpacFinal = 3, "DLOAD 1.0, DAD 2.0, DCOMP, DCOMP leaves 3",
-                      "MPAC " & mpacFinal.ToString())
+                ' DLOAD, DAD and DSU are two basic words each (opcode plus operand);
+                ' DCOMP and DABS are one word each because they take no operand.
+                Dim afterDload As Integer
+                Dim afterDad As Integer
+                Dim afterDsu As Integer
 
-                Check(machine.Interpreter.InstructionCount = 4,
-                      "the interpreter executed four instructions",
+                machine.StepOne()
+                afterDload = machine.Interpreter.Mpac
+                machine.StepOne()
+                afterDad = machine.Interpreter.Mpac
+                machine.StepOne()
+                afterDsu = machine.Interpreter.Mpac
+                machine.StepOne()                     ' DCOMP
+                Dim afterDcomp As Integer = machine.Interpreter.Mpac
+                machine.StepOne()                     ' DABS
+                Dim afterDabs As Integer = machine.Interpreter.Mpac
+                machine.StepOne()                     ' EXIT
+
+                Console.WriteLine("  MPAC: DLOAD=" & afterDload.ToString() &
+                                  " DAD=" & afterDad.ToString() &
+                                  " DSU=" & afterDsu.ToString() &
+                                  " DCOMP=" & afterDcomp.ToString() &
+                                  " DABS=" & afterDabs.ToString() &
+                                  " ; Z=" & AgcWord.ToOctal(machine.Cpu.Z))
+
+                Check(afterDload = 1, "DLOAD 1.0 gives 1", afterDload.ToString())
+                Check(afterDad = 3, "DAD 2.0 gives 3", afterDad.ToString())
+                Check(afterDsu = 2, "DSU 1.0 gives 2", afterDsu.ToString())
+                Check(afterDcomp = -2, "DCOMP gives -2", afterDcomp.ToString())
+                Check(afterDabs = 2, "DABS gives 2", afterDabs.ToString())
+                Check(machine.Interpreter.InstructionCount = 6,
+                      "the interpreter executed six instructions",
                       machine.Interpreter.InstructionCount.ToString() & " executed")
                 Check(Not machine.Cpu.Halted, "the CPU did not halt",
                       machine.Cpu.HaltReason)
@@ -166,11 +178,6 @@ Namespace Agc
             End Try
         End Sub
 
-        ''' <summary>
-        ''' Assemble a short program, run it, and check the machine state at the
-        ''' end.  The programs that use erasable memory are assembled with
-        ''' "SETLOC 0" so that the registers land in the unswitched erasable area,
-        ''' the way the real AGC sources do.
         ''' </summary>
         Private Sub RunAritmeticProgram()
             Console.WriteLine("Assembler + CPU smoke test (arithmetic and CCS):")

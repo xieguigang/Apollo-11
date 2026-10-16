@@ -43,6 +43,24 @@ Namespace Agc
         Private ReadOnly _cpu As AgcCpu
         Private ReadOnly _memory As AgcMemory
 
+        ''' <summary>
+        ''' The interpretive opcodes this engine executes, as a sorted list of
+        ''' "NAME=code" strings.  Anything not listed will halt the CPU with an
+        ''' "unrecognised opcode" diagnostic rather than silently doing nothing.
+        ''' </summary>
+        Public Shared Function ImplementedOpcodes() As List(Of String)
+            Dim result As New List(Of String)()
+            For Each item As String In New String() { _
+                "EXIT=000", "VLOAD=001", "VLOAD*=003", "CALL=016", "DLOAD=031", "DLOAD*=033",
+                "DSQ=030", "INCR,2=032", "INCR,1=036", "DCOMP=040", "SR=042", "ABS=058",
+                "DDV=045", "DDV*=047", "SL=046", "VADD=049", "VSUB=051", "VXSC=055",
+                "PUSH=078", "POP=076", "CLEAR=072", "BZE=052", "BPL=058", "GOTO=056",
+                "DSU=151", "DSU*=153", "DAD=161", "DAD*=163", "DMP=171", "DMP*=173"}
+                result.Add(item)
+            Next
+            Return result
+        End Function
+
         ''' <summary>Number of interpretive instructions executed.</summary>
         Public Property InstructionCount As Integer
 
@@ -279,17 +297,14 @@ Namespace Agc
         Private Function ExecuteCode(code As Integer, operand As Integer) As Boolean
             Select Case code
                 Case &H0
-                    ' EXIT, and the STORE family's base code.  A pure EXIT means the
-                    ' interpretive sequence is finished: return to basic instructions
-                    ' at the word after the operand.
-                    Loc = (_cpu.Z + 1) And &HFFF
+                    ' EXIT.  The interpretive sequence is finished, so the basic
+                    ' program continues at the word after this instruction.  That is
+                    ' already where Z points, so nothing has to be moved.
+                    Loc = _cpu.Z And &HFFF
                     Return True
 
                 Case &H19, &H1B                   ' DLOAD / DLOAD*
-                    Dim hi As Integer = ReadOperand(operand - 1)
-                    Dim lo As Integer = ReadOperand(operand)
-                    WriteErasable(AddrMpac, hi)
-                    WriteErasable(AddrMpacLow, lo)
+                    WriteMpac(ReadDouble(operand))
                     Return True
 
                 Case &H71, &H73                   ' DAD / DAD*
@@ -301,9 +316,11 @@ Namespace Agc
                 Case &H79, &H7B                   ' DMP / DMP*
                     Return DoubleMultiply(operand)
 
+                Case &H45, &H47                   ' DDV / DDV*: double divide
+                    Return DoubleDivide(operand)
+
                 Case &H1, &H3                     ' VLOAD / VLOAD*
-                    WriteErasable(AddrMpac, ReadOperand(operand))
-                    WriteErasable(AddrMpacLow, 0)
+                    WriteMpac(CLng(ReadSignedOperand(operand)) << 14)
                     Return True
 
                 Case &H49                        ' VADD
@@ -312,24 +329,91 @@ Namespace Agc
                 Case &H4B                        ' VSUB
                     Return VectorAdd(operand, -1)
 
-                Case &H40                        ' DCOMP: negate MPAC
+                Case &H4D                        ' VXSC: MPAC = MPAC * scalar
+                    WriteMpac((ReadMpac() * ReadSignedOperand(operand)) >> 14)
+                    Return True
+
+                Case &H40                        ' DCOMP: MPAC = -MPAC
                     WriteMpac(-ReadMpac())
                     Return True
 
-                Case &H78                        ' PUSH
+                Case &H58                        ' ABS: MPAC = |MPAC|
+                    Dim v As Integer = ReadMpac()
+                    If v < 0 Then WriteMpac(-v)
+                    Return True
+
+                Case &H30                        ' DSQ: MPAC = MPAC squared
+                    Dim sq As Integer = ReadMpac()
+                    WriteMpac((CLng(sq) * CLng(sq)) >> 28)
+                    Return True
+
+                Case &H36                        ' INCR,1
+                    WriteMpac(ReadMpac() + (&H4000L << 14))
+                    Return True
+
+                Case &H32                        ' INCR,2
+                    WriteMpac(ReadMpac() + &H4000L)
+                    Return True
+
+                Case &H78                        ' PUSH: save MPAC's high word
                     PushDown(ReadErasable(AddrMpac))
                     Return True
 
-                Case &H56                        ' GOTO
-                    _cpu.Z = operand And &HFFF
+                Case &H76                        ' POP: restore MPAC's high word
+                    WriteErasable(AddrMpac, PopUp())
                     Return True
 
-                Case &H0                          ' unreachable; kept for clarity
-                    Return False
+                Case &H18                        ' CLEAR / CLR: MPAC = 0
+                    WriteMpac(0)
+                    Return True
+
+                Case &H46, &H42                   ' SL / SR shifts by the operand count
+                    Return ShiftMpac(operand, code = &H46)
+
+                Case &H56                        ' GOTO
+                    Return GoToAddress(operand)
+
+                Case &H16                        ' CALL / CALRB
+                    PushDown((_cpu.Z + 1) And &HFFF)
+                    Return GoToAddress(operand)
+
+                Case &H5A                        ' BPL: branch when MPAC >= 0
+                    If ReadMpac() >= 0 Then Return GoToAddress(operand)
+                    Return True
+
+                Case &H52                        ' BZE: branch when MPAC = 0
+                    If ReadMpac() = 0 Then Return GoToAddress(operand)
+                    Return True
 
                 Case Else
                     Return False
             End Select
+        End Function
+
+        ''' <summary>
+        ''' A branch inside the interpretive program.  The whole interpretive
+        ''' instruction is replaced, so the target becomes the new basic program
+        ''' counter and execution continues there.
+        ''' </summary>
+        Private Function GoToAddress(target As Integer) As Boolean
+            Dim addr As Integer = target And AgcWord.Mask15
+            ' The target is either erasable (below 04000) or fixed; both are
+            ' expressed as a basic-memory address.
+            _cpu.Z = addr
+            Loc = addr
+            Return True
+        End Function
+
+        ''' <summary>Shift MPAC left or right, filling with zeros.</summary>
+        Private Function ShiftMpac(count As Integer, left As Boolean) As Boolean
+            Dim n As Integer = count And &HF
+            Dim v As Integer = ReadMpac()
+            If left Then
+                WriteMpac(v << n)
+            Else
+                WriteMpac(v >> n)
+            End If
+            Return True
         End Function
 
         ' ------------------------------------------------------------------
@@ -337,36 +421,56 @@ Namespace Agc
         ' ------------------------------------------------------------------
 
         ''' <summary>
-        ''' MPAC = MPAC +/- the 28-bit value at (operand-1, operand).  DLOAD, DAD and
-        ''' DSU address the low word of a double-precision argument, so the high word
-        ''' is one address below it.
+        ''' Read the 28-bit double-precision value whose LOW word is at
+        ''' <paramref name="operand"/>.  DLOAD, DAD and DSU address the low word, so
+        ''' the high word is one address below.
         ''' </summary>
+        Private Function ReadDouble(operand As Integer) As Integer
+            Dim hi As Integer = ReadOperand(operand - 1) And MpacWordMask
+            Dim lo As Integer = ReadOperand(operand) And MpacWordMask
+            If (hi And &H2000) <> 0 Then
+                Dim cHi As Integer = (MpacWordMask Xor hi) And MpacWordMask
+                Dim cLo As Integer = (MpacWordMask Xor lo) And MpacWordMask
+                Return -((cHi << 14) Or cLo)
+            End If
+            Return (hi << 14) Or lo
+        End Function
+
+        ''' <summary>Read a 15-bit scalar operand as a signed value.</summary>
+        Private Function ReadSignedOperand(a As Integer) As Integer
+            Dim v As Integer = ReadOperand(a)
+            If (v And &H4000) <> 0 Then
+                Return -((MpacWordMask Xor v) And MpacWordMask)
+            End If
+            Return v And MpacWordMask
+        End Function
+
+        ''' <summary>MPAC = MPAC +/- the 28-bit value at the operand.</summary>
         Private Function DoubleAdd(operand As Integer, sign As Integer) As Boolean
-            Dim hi As Integer = ReadOperand(operand - 1)
-            Dim lo As Integer = ReadOperand(operand)
-            Dim other As Integer = (hi << 14) Or lo
-            Dim mine As Integer = ReadMpac()
-            If sign < 0 Then other = -other
-            WriteMpac(mine + other)
+            Dim other As Integer = ReadDouble(operand)
+            WriteMpac(ReadMpac() + sign * other)
             Return True
         End Function
 
-        ''' <summary>MPAC = MPAC * the double-precision value at the operand.</summary>
+        ''' <summary>MPAC = MPAC * the 28-bit value at the operand.</summary>
         Private Function DoubleMultiply(operand As Integer) As Boolean
-            Dim hi As Integer = ReadOperand(operand - 1)
-            Dim lo As Integer = ReadOperand(operand)
-            Dim other As Integer = (hi << 14) Or lo
-            Dim product As Long = CLng(ReadMpac()) * CLng(other)
-            ' The result keeps the top 28 bits.
+            Dim product As Long = CLng(ReadMpac()) * CLng(ReadDouble(operand))
             WriteMpac(CInt(product >> 28))
             Return True
         End Function
 
-        ''' <summary>MPAC = MPAC +/- the 15-bit value at the operand.</summary>
+        ''' <summary>MPAC = MPAC / the 28-bit value at the operand.</summary>
+        Private Function DoubleDivide(operand As Integer) As Boolean
+            Dim divisor As Integer = ReadDouble(operand)
+            If divisor = 0 Then Return True          ' divide by zero is a no-op here
+            WriteMpac(CInt((CLng(ReadMpac()) << 28) \ CLng(divisor)))
+            Return True
+        End Function
+
+        ''' <summary>MPAC = MPAC +/- the 15-bit scalar at the operand.</summary>
         Private Function VectorAdd(operand As Integer, sign As Integer) As Boolean
-            Dim v As Integer = ReadSigned(operand)
-            If sign < 0 Then v = -v
-            WriteMpac(ReadMpac() + (v << 14))
+            Dim v As Integer = ReadSignedOperand(operand)
+            WriteMpac(ReadMpac() + CLng(sign * v) * &H4000L)
             Return True
         End Function
 
